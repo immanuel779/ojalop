@@ -1,11 +1,16 @@
 /* eslint-disable @next/next/no-img-element */
 import Link from "next/link";
-import { Search, MapPin, ShieldCheck, ArrowRight, Heart, Share2, SlidersHorizontal, LayoutGrid, List, Flame, CheckCircle2, ChevronDown } from "lucide-react";
+import { 
+  Search, MapPin, ShieldCheck, ArrowRight, Heart, Share2, 
+  SlidersHorizontal, LayoutGrid, List, Flame, CheckCircle2, 
+  ChevronDown, Sparkles, TrendingUp 
+} from "lucide-react";
 import { createClient } from "@/lib/supabase/server";
+import SafeImage from "@/components/marketplace/SafeImage";
 
+// THIS FORCES THE PAGE TO FETCH FRESH DATA ON EVERY SINGLE VISIT
 export const dynamic = 'force-dynamic';
 
-// BULLETPROOF FALLBACK IMAGES
 const FALLBACK_IMAGES: Record<string, string> = {
   "vehicles": "https://images.unsplash.com/photo-1494976388531-d1058494cdd8?w=500&q=80",
   "phones-tablets": "https://images.unsplash.com/photo-1511707171634-5f897ff02aa9?w=500&q=80",
@@ -22,41 +27,55 @@ const FALLBACK_IMAGES: Record<string, string> = {
   "services": "https://images.unsplash.com/photo-1581578731548-c64695cc6952?w=500&q=80",
   "repair-construction": "https://images.unsplash.com/photo-1503387762-592deb58ef4e?w=500&q=80",
   "health-wellness": "https://images.unsplash.com/photo-1584622650111-993a426fbf0a?w=500&q=80",
-  "default": "https://images.unsplash.com/photo-1472851294608-062f824d29cc?w=500&q=80" // A generic shopping bag
+  "default": "https://images.unsplash.com/photo-1472851294608-062f824d29cc?w=500&q=80"
 };
 
 export default async function HomePage() {
   const supabase = await createClient();
   
-  const { data: categories } = await supabase.from("categories").select("*").eq("is_active", true).order("name");
+  // 1. Fetch Real-Time Categories
+  const { data: categories } = await supabase
+    .from("categories")
+    .select("*")
+    .eq("is_active", true)
+    .order("name");
   
+  // 2. Fetch Real-Time Products (Only Approved, Active, and with an Image)
   const { data: products } = await supabase
     .from("products")
     .select("*, stores(name, verification_status, logo_url), categories(name)")
     .eq("status", "approved")
     .eq("is_active", true)
+    .not("image_url", "is", null)
     .order("created_at", { ascending: false })
-    .limit(20);
+    .limit(30);
 
+  // 3. Fetch Real-Time Product Count for the "Explore All" button
   const { count: totalProducts } = await supabase
     .from("products")
     .select("*", { count: 'exact', head: true })
     .eq("status", "approved")
     .eq("is_active", true);
 
+  // 4. Fetch Real-Time Featured Stores
   const { data: stores } = await supabase
     .from("stores")
     .select("id, name, slug, logo_url, verification_status, location_state")
     .eq("is_active", true)
     .limit(4);
 
-  const dealOfTheDay = products?.[0];
-  const promotedAds = products?.slice(1, 3) || [];
-  const trendingListings = products?.slice(3, 11) || [];
-  const nearYouListings = products?.slice(11, 15) || [];
+  // BULLETPROOF SLICING: Filter out any products with broken data
+  const validProducts = products?.filter(p => p.image_url && p.image_url.startsWith('http')) || [];
 
+  // Dynamic Sections
+  const dealOfTheDay = validProducts[0];
+  const promotedAds = validProducts.slice(1, 3);
+  const trendingListings = validProducts.slice(3, 11);
+  const nearYouListings = validProducts.slice(11, 15);
+
+  // Dynamic Top Markets Calculation
   const stateCounts: Record<string, number> = {};
-  products?.forEach((p) => {
+  validProducts.forEach((p) => {
     if (p.location_state) {
       stateCounts[p.location_state] = (stateCounts[p.location_state] || 0) + 1;
     }
@@ -76,7 +95,7 @@ export default async function HomePage() {
 
       {/* 1. HERO BANNER */}
       <div className="px-4 mt-4">
-        <div className="bg-gradient-to-r from-orange-600 to-orange-800 rounded-3xl overflow-hidden relative">
+        <div className="bg-gradient-to-r from-orange-600 to-orange-800 rounded-3xl overflow-hidden relative shadow-lg">
           <div className="p-6 md:p-10 relative z-10 w-full md:w-2/3">
             <h1 className="text-3xl md:text-5xl font-bold leading-tight mb-2 text-white">
               Buy & Sell Safely Across Nigeria
@@ -85,30 +104,30 @@ export default async function HomePage() {
               Direct deals and secure payments with OjaLoop Escrow.
             </p>
             <div className="flex gap-3">
-              <Link href="/seller/onboarding" className="bg-white text-orange-600 px-5 py-2.5 rounded-lg text-sm font-bold shadow-sm hover:bg-gray-50 flex items-center gap-2">
+              <Link href="/seller/onboarding" className="bg-white text-orange-600 px-5 py-2.5 rounded-lg text-sm font-bold shadow-sm hover:bg-gray-50 flex items-center gap-2 transition">
                 <span className="text-lg leading-none">+</span> Post Ad
               </Link>
-              <Link href="/search" className="bg-orange-800/50 text-white px-5 py-2.5 rounded-lg text-sm font-bold backdrop-blur-sm border border-orange-500/30 flex items-center gap-2">
+              <Link href="/search" className="bg-orange-800/50 text-white px-5 py-2.5 rounded-lg text-sm font-bold backdrop-blur-sm border border-orange-500/30 flex items-center gap-2 hover:bg-orange-800/70 transition">
                 <Search size={16} /> Browse Listings
               </Link>
             </div>
           </div>
-          <div className="hidden md:block absolute right-0 bottom-0 w-1/3 h-full bg-[url('https://images.unsplash.com/photo-1573164713988-8665fc963095?auto=format&fit=crop&w=600&q=80')] bg-cover bg-center"></div>
+          <div className="hidden md:block absolute right-0 bottom-0 w-1/3 h-full bg-[url('https://images.unsplash.com/photo-1573164713988-8665fc963095?auto=format&fit=crop&w=600&q=80')] bg-cover bg-center opacity-80 mix-blend-overlay"></div>
         </div>
       </div>
 
       {/* 2. DEAL OF THE DAY */}
-      {dealOfTheDay && (
+      {dealOfTheDay ? (
         <div className="px-4 mt-6">
           <Link href={`/products/${dealOfTheDay.slug}`} className="bg-orange-50 border border-orange-100 rounded-2xl p-3 flex gap-4 items-center hover:shadow-md transition block">
-            <div className="w-24 h-24 bg-white rounded-xl overflow-hidden flex-shrink-0">
-              <img src={dealOfTheDay.image_url} alt={dealOfTheDay.title} className="w-full h-full object-cover" />
+            <div className="w-24 h-24 bg-white rounded-xl overflow-hidden flex-shrink-0 border border-orange-100">
+              <SafeImage src={dealOfTheDay.image_url} alt={dealOfTheDay.title} className="w-full h-full object-cover" />
             </div>
-            <div>
-              <div className="inline-flex items-center gap-1 bg-orange-600 text-white text-[10px] font-bold px-2 py-1 rounded-full mb-2">
+            <div className="flex-1 min-w-0">
+              <div className="inline-flex items-center gap-1 bg-orange-600 text-white text-[10px] font-bold px-2 py-1 rounded-full mb-1">
                 <Flame size={12} /> DEAL OF THE DAY
               </div>
-              <h3 className="font-bold text-gray-900 text-lg leading-tight line-clamp-1">{dealOfTheDay.title}</h3>
+              <h3 className="font-bold text-gray-900 text-lg leading-tight truncate">{dealOfTheDay.title}</h3>
               <p className="text-orange-600 font-bold text-xl">₦ {Number(dealOfTheDay.price).toLocaleString()}</p>
               <div className="flex items-center gap-1 text-xs text-gray-500 mt-1">
                 <MapPin size={12} /> {dealOfTheDay.location_state || 'Nigeria'}
@@ -116,41 +135,47 @@ export default async function HomePage() {
             </div>
           </Link>
         </div>
+      ) : (
+        <div className="px-4 mt-6">
+          <div className="bg-white border border-gray-200 rounded-2xl p-4 text-center text-gray-500 text-sm">
+            No active listings today. Check back later!
+          </div>
+        </div>
       )}
 
       {/* 3. POPULAR CATEGORIES */}
-      <div className="mt-8">
-        <div className="px-4 flex items-center justify-between mb-4">
-          <div>
-            <h2 className="text-orange-600 font-bold text-xs uppercase tracking-wider mb-1">Browse Sectors</h2>
-            <h3 className="font-bold text-2xl text-gray-900">Explore Popular Categories</h3>
+      {categories && categories.length > 0 && (
+        <div className="mt-8">
+          <div className="px-4 flex items-center justify-between mb-4">
+            <div>
+              <h2 className="text-orange-600 font-bold text-xs uppercase tracking-wider mb-1">Browse Sectors</h2>
+              <h3 className="font-bold text-2xl text-gray-900">Explore Categories</h3>
+            </div>
+            <Link href="/search" className="text-orange-600 text-sm font-semibold flex items-center gap-1 hover:underline">
+              View all <ArrowRight size={16} />
+            </Link>
           </div>
-          <Link href="/search" className="text-orange-600 text-sm font-semibold flex items-center gap-1 hover:underline">
-            View all <ArrowRight size={16} />
-          </Link>
+          <div className="flex overflow-x-auto gap-4 px-4 pb-4 scrollbar-hide snap-x">
+            {categories.map((cat) => {
+              const imageUrl = cat.image_url || FALLBACK_IMAGES[cat.slug] || FALLBACK_IMAGES["default"];
+              return (
+                <Link key={cat.id} href={`/search?category=${cat.id}`} className="relative min-w-[150px] md:min-w-[180px] h-[200px] rounded-2xl overflow-hidden snap-start group">
+                  <SafeImage src={imageUrl} alt={cat.name} className="absolute inset-0 w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" />
+                  <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent"></div>
+                  <div className="absolute bottom-4 left-4 text-white">
+                    <h4 className="font-bold text-lg leading-tight mb-1">{cat.name}</h4>
+                    <p className="text-xs text-gray-300">Explore ads</p>
+                  </div>
+                </Link>
+              );
+            })}
+          </div>
         </div>
-        <div className="flex overflow-x-auto gap-4 px-4 pb-4 scrollbar-hide snap-x">
-          {categories?.map((cat) => {
-            // Use DB image, or fallback to the mapping above
-            const imageUrl = cat.image_url || FALLBACK_IMAGES[cat.slug] || FALLBACK_IMAGES["default"];
-            
-            return (
-              <Link key={cat.id} href={`/search?category=${cat.id}`} className="relative min-w-[160px] h-[200px] rounded-2xl overflow-hidden snap-start group">
-                <img src={imageUrl} alt={cat.name} className="absolute inset-0 w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" />
-                <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent"></div>
-                <div className="absolute bottom-4 left-4 text-white">
-                  <h4 className="font-bold text-lg leading-tight mb-1">{cat.name}</h4>
-                  <p className="text-xs text-gray-300">Explore ads</p>
-                </div>
-              </Link>
-            );
-          })}
-        </div>
-      </div>
+      )}
 
       {/* 4. AFFILIATE BANNER */}
       <div className="px-4 mt-6">
-        <div className="bg-gray-900 rounded-2xl p-5 flex items-center justify-between">
+        <div className="bg-gray-900 rounded-2xl p-5 flex items-center justify-between shadow-lg">
           <div className="flex gap-4 items-center">
             <div className="w-12 h-12 bg-orange-500/20 text-orange-500 rounded-xl flex items-center justify-center flex-shrink-0">
               <Flame size={24} />
@@ -177,20 +202,25 @@ export default async function HomePage() {
             <span className="bg-gray-900 text-white text-[10px] font-bold px-2 py-1 rounded">SPONSORED</span>
           </div>
           <div className="flex overflow-x-auto gap-4 px-4 pb-4 scrollbar-hide snap-x">
-            {promotedAds.map((product) => (
-              <Link href={`/products/${product.slug}`} key={product.id} className="min-w-[240px] bg-white rounded-2xl border border-gray-200 overflow-hidden snap-start relative block hover:shadow-lg transition">
-                <div className="absolute top-3 left-3 bg-gray-900 text-white text-[10px] font-bold px-2 py-1 rounded z-10">PREMIUM STORE</div>
-                <img src={product.image_url} alt={product.title} className="w-full h-40 object-cover" />
-                <div className="p-3">
-                  <p className="text-[10px] text-orange-600 font-bold uppercase mb-1">{product.categories?.name}</p>
-                  <h4 className="font-bold text-sm text-gray-900 truncate">{product.title}</h4>
-                  <p className="text-gray-900 font-bold mt-1">₦ {Number(product.price).toLocaleString()}</p>
-                  <div className="flex items-center gap-1 text-[11px] text-gray-500 mt-2">
-                    <MapPin size={12} /> {product.location_state}
+            {promotedAds.map((product) => {
+              const category = Array.isArray(product.categories) ? product.categories[0] : product.categories;
+              return (
+                <Link href={`/products/${product.slug}`} key={product.id} className="min-w-[240px] bg-white rounded-2xl border border-gray-200 overflow-hidden snap-start relative block hover:shadow-lg transition">
+                  <div className="absolute top-3 left-3 bg-gray-900 text-white text-[10px] font-bold px-2 py-1 rounded z-10 flex items-center gap-1">
+                    <Sparkles size={10} className="text-orange-500"/> PREMIUM
                   </div>
-                </div>
-              </Link>
-            ))}
+                  <SafeImage src={product.image_url} alt={product.title} className="w-full h-40 object-cover" />
+                  <div className="p-3">
+                    <p className="text-[10px] text-orange-600 font-bold uppercase mb-1">{category?.name}</p>
+                    <h4 className="font-bold text-sm text-gray-900 truncate">{product.title}</h4>
+                    <p className="text-gray-900 font-bold mt-1">₦ {Number(product.price).toLocaleString()}</p>
+                    <div className="flex items-center gap-1 text-[11px] text-gray-500 mt-2">
+                      <MapPin size={12} /> {product.location_state}
+                    </div>
+                  </div>
+                </Link>
+              );
+            })}
           </div>
         </div>
       )}
@@ -200,8 +230,8 @@ export default async function HomePage() {
         <div className="px-4 mt-8">
           <div className="flex items-center justify-between mb-4">
             <div>
-              <h2 className="text-orange-600 font-bold text-xs uppercase tracking-wider mb-1">Official Seller Stores</h2>
-              <h3 className="font-bold text-2xl text-gray-900">Featured Stores & Dealerships</h3>
+              <h2 className="text-orange-600 font-bold text-xs uppercase tracking-wider mb-1">Official Stores</h2>
+              <h3 className="font-bold text-2xl text-gray-900">Featured Dealerships</h3>
             </div>
             <Link href="/stores" className="border border-orange-200 text-orange-600 px-4 py-2 rounded-xl text-sm font-bold flex items-center gap-1 hover:bg-orange-50">
               View All <ArrowRight size={16} />
@@ -213,7 +243,7 @@ export default async function HomePage() {
               <Link href={`/stores/${store.slug}`} key={store.id} className="bg-white border border-gray-200 rounded-2xl p-4 flex flex-col items-center text-center hover:shadow-md transition group">
                 <div className="w-16 h-16 rounded-full bg-gray-100 border border-gray-200 overflow-hidden mb-3">
                   {store.logo_url ? (
-                    <img src={store.logo_url} alt={store.name} className="w-full h-full object-cover" />
+                    <SafeImage src={store.logo_url} alt={store.name} className="w-full h-full object-cover" />
                   ) : (
                     <div className="w-full h-full flex items-center justify-center font-bold text-gray-400 bg-gray-50">{store.name.charAt(0)}</div>
                   )}
@@ -254,8 +284,10 @@ export default async function HomePage() {
       {/* 8. TRENDING LISTINGS */}
       {trendingListings.length > 0 && (
         <div className="px-4 mt-8">
-          <h2 className="text-orange-600 font-bold text-xs uppercase tracking-wider mb-1">Handpicked Deals</h2>
-          <h3 className="font-bold text-2xl text-gray-900 mb-4">Trending Listings in Nigeria</h3>
+          <h2 className="text-orange-600 font-bold text-xs uppercase tracking-wider mb-1 flex items-center gap-1">
+            <TrendingUp size={14} /> Handpicked Deals
+          </h2>
+          <h3 className="font-bold text-2xl text-gray-900 mb-4">Trending in Nigeria</h3>
           
           <div className="flex items-center gap-2 mb-4">
             <Link href="/search" className="flex-1 border border-gray-200 bg-white rounded-xl py-2 flex items-center justify-center gap-2 text-sm font-medium text-gray-700 hover:bg-gray-50">
@@ -277,7 +309,7 @@ export default async function HomePage() {
               return (
                 <Link href={`/products/${product.slug}`} key={product.id} className="bg-white rounded-2xl border border-gray-100 overflow-hidden flex flex-col hover:shadow-md transition group">
                   <div className="relative h-40 md:h-56 bg-gray-100 overflow-hidden">
-                    <img src={product.image_url} alt={product.title} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" />
+                    <SafeImage src={product.image_url} alt={product.title} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" />
                     {store?.verification_status === 'verified' && (
                       <div className="absolute top-2 left-2 bg-green-700/90 backdrop-blur-sm text-white text-[10px] font-bold px-2 py-1 rounded flex items-center gap-1">
                         <CheckCircle2 size={10} /> Verified
@@ -298,7 +330,7 @@ export default async function HomePage() {
                     <div className="flex items-center justify-between mt-3 pt-3 border-t border-gray-100">
                       <div className="flex items-center gap-1.5">
                         <div className="w-5 h-5 bg-gray-200 rounded-full overflow-hidden">
-                          {store?.logo_url && <img src={store.logo_url} alt={store.name} className="w-full h-full object-cover" />}
+                          {store?.logo_url && <SafeImage src={store.logo_url} alt={store.name} className="w-full h-full object-cover" />}
                         </div>
                         <span className="text-[10px] font-medium text-gray-600 truncate max-w-[80px]">{store?.name}</span>
                       </div>
@@ -363,7 +395,7 @@ export default async function HomePage() {
             {nearYouListings.map((product) => (
                <Link href={`/products/${product.slug}`} key={product.id} className="min-w-[200px] bg-white rounded-2xl border border-gray-100 overflow-hidden snap-start flex flex-col hover:shadow-md transition">
                 <div className="relative h-40 bg-gray-100">
-                  <img src={product.image_url} alt={product.title} className="w-full h-full object-cover" />
+                  <SafeImage src={product.image_url} alt={product.title} className="w-full h-full object-cover" />
                   <div className="absolute top-2 left-2 bg-gray-900/80 text-white text-[10px] px-2 py-1 rounded"> {product.location_city || product.location_state}</div>
                   <div className="absolute bottom-2 left-2 bg-orange-600 text-white text-[10px] font-bold px-2 py-1 rounded flex items-center gap-1">
                     <ShieldCheck size={10} /> Escrow Protected
