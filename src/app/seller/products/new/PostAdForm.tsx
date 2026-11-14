@@ -2,6 +2,7 @@
 "use client";
 
 import { useState } from "react";
+import { useFormStatus } from "react-dom"; // <-- Import useFormStatus
 import Link from "next/link";
 import { ArrowLeft, UploadCloud, ShieldAlert, ShieldCheck, Loader2, CheckCircle2, X, Image as ImageIcon } from "lucide-react";
 import { createProductAction } from "./actions";
@@ -14,17 +15,42 @@ const NIGERIAN_STATES = [
   "Taraba", "Yobe", "Zamfara"
 ];
 
+// Custom Button Component that knows which button was clicked
+function SubmitButton({ intent, defaultText, pendingText, icon, variant }: { intent: "draft" | "publish", defaultText: string, pendingText: string, icon: React.ReactNode, variant: "draft" | "publish" }) {
+  const { pending, data } = useFormStatus();
+  const isThisButtonPending = pending && data?.get("intent") === intent;
+
+  const base = "flex-1 py-4 rounded-2xl font-bold text-lg transition-all flex justify-center items-center gap-2 disabled:opacity-70 disabled:cursor-not-allowed";
+  const styles = variant === "publish" 
+    ? "bg-orange-600 text-white hover:bg-orange-700 shadow-xl shadow-orange-600/20" 
+    : "bg-gray-100 text-gray-700 hover:bg-gray-200";
+
+  return (
+    <button 
+      type="submit" 
+      name="intent" 
+      value={intent} 
+      disabled={pending}
+      className={`${base} ${styles}`}
+    >
+      {isThisButtonPending ? (
+        <><Loader2 className="animate-spin" size={24} /> {pendingText}</>
+      ) : (
+        <>{icon} {defaultText}</>
+      )}
+    </button>
+  );
+}
+
 export default function PostAdForm({ categories }: { categories: {id: string, name: string}[] }) {
   const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
   const [escrowEnabled, setEscrowEnabled] = useState(true);
 
   async function handleSubmit(formData: FormData) {
     setError(null);
-    setLoading(true);
+    // The loading state is now handled by useFormStatus in the buttons
     const result = await createProductAction(formData);
-    setLoading(false);
     if (result?.error) setError(result.error);
   }
 
@@ -226,13 +252,22 @@ export default function PostAdForm({ categories }: { categories: {id: string, na
               </div>
             )}
 
+            {/* UPDATED BUTTONS */}
             <div className="flex flex-col sm:flex-row gap-4 mt-8">
-              <button type="submit" name="intent" value="draft" disabled={loading} className="flex-1 bg-gray-100 text-gray-700 py-4 rounded-2xl font-bold text-lg hover:bg-gray-200 transition-all flex justify-center items-center gap-2">
-                Save as Draft
-              </button>
-              <button type="submit" name="intent" value="publish" disabled={loading} className="flex-1 bg-orange-600 text-white py-4 rounded-2xl font-bold text-lg hover:bg-orange-700 transition-all shadow-xl shadow-orange-600/20 disabled:opacity-70 flex justify-center items-center gap-2">
-                {loading ? <Loader2 className="animate-spin" size={24} /> : <><CheckCircle2 size={20} /> Publish Listing</>}
-              </button>
+              <SubmitButton 
+                intent="draft" 
+                defaultText="Save as Draft" 
+                pendingText="Saving Draft..." 
+                icon={null} 
+                variant="draft" 
+              />
+              <SubmitButton 
+                intent="publish" 
+                defaultText="Publish Listing" 
+                pendingText="Publishing..." 
+                icon={<CheckCircle2 size={20} />} 
+                variant="publish" 
+              />
             </div>
           </div>
         </form>
