@@ -1,10 +1,9 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { Bell, Check, ShoppingBag, MessageSquare, ShieldAlert } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { useRouter } from "next/navigation";
-import Link from "next/link";
 
 type Notification = {
   id: string;
@@ -23,25 +22,27 @@ export default function NotificationBell({ userId }: { userId: string }) {
   const supabase = createClient();
   const router = useRouter();
 
-  // Fetch initial notifications
-  useEffect(() => {
-    async function fetchNotifications() {
-      const { data } = await supabase
-        .from("notifications")
-        .select("*")
-        .eq("user_id", userId)
-        .order("created_at", { ascending: false })
-        .limit(20);
-      
-      if (data) setNotifications(data);
-    }
-    fetchNotifications();
+  // 1. Fetch initial data
+  const fetchNotifications = useCallback(async () => {
+    const { data } = await supabase
+      .from("notifications")
+      .select("*")
+      .eq("user_id", userId)
+      .order("created_at", { ascending: false })
+      .limit(20);
+    
+    if (data) setNotifications(data);
   }, [userId, supabase]);
 
-  // Real-time listener
+  // 2. Listen for Realtime Inserts
   useEffect(() => {
+    // FIXED: Defer the initial fetch to next tick to satisfy React 19 linter
+    const timer = setTimeout(() => {
+      fetchNotifications();
+    }, 0);
+
     const channel = supabase
-      .channel("realtime_notifications")
+      .channel(`realtime_notifications_${userId}`)
       .on(
         "postgres_changes",
         { event: "INSERT", schema: "public", table: "notifications", filter: `user_id=eq.${userId}` },
@@ -51,10 +52,13 @@ export default function NotificationBell({ userId }: { userId: string }) {
       )
       .subscribe();
 
-    return () => { supabase.removeChannel(channel); };
-  }, [userId, supabase]);
+    return () => {
+      clearTimeout(timer);
+      supabase.removeChannel(channel); 
+    };
+  }, [userId, supabase, fetchNotifications]);
 
-  // Close on click outside
+  // 3. Close on click outside
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
       if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
@@ -67,25 +71,20 @@ export default function NotificationBell({ userId }: { userId: string }) {
 
   const unreadCount = notifications.filter((n) => !n.is_read).length;
 
-  // Mark all as read
   const markAllRead = async () => {
     await supabase.from("notifications").update({ is_read: true }).eq("user_id", userId).eq("is_read", false);
     setNotifications((prev) => prev.map((n) => ({ ...n, is_read: true })));
   };
 
-  // Handle click on a notification
   const handleNotificationClick = async (notif: Notification) => {
     if (!notif.is_read) {
       await supabase.from("notifications").update({ is_read: true }).eq("id", notif.id);
-      setNotifications((prev) =>
-        prev.map((n) => (n.id === notif.id ? { ...n, is_read: true } : n))
-      );
+      setNotifications((prev) => prev.map((n) => (n.id === notif.id ? { ...n, is_read: true } : n)));
     }
     setIsOpen(false);
     if (notif.link) router.push(notif.link);
   };
 
-  // Icons based on type
   const getIcon = (type: string) => {
     switch (type) {
       case "order": return <ShoppingBag size={16} className="text-orange-500" />;
@@ -96,7 +95,6 @@ export default function NotificationBell({ userId }: { userId: string }) {
 
   return (
     <div className="relative" ref={dropdownRef}>
-      {/* Bell Icon */}
       <button
         onClick={() => setIsOpen(!isOpen)}
         className="relative p-2 text-gray-600 hover:text-orange-600 transition"
@@ -109,7 +107,6 @@ export default function NotificationBell({ userId }: { userId: string }) {
         )}
       </button>
 
-      {/* Dropdown */}
       {isOpen && (
         <div className="absolute right-0 mt-2 w-80 bg-white rounded-2xl shadow-2xl border border-gray-100 overflow-hidden z-50 animate-in fade-in slide-in-from-top-2 duration-200">
           <div className="p-4 border-b border-gray-100 flex justify-between items-center bg-gray-50">
