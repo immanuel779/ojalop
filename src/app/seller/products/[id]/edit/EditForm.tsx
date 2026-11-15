@@ -9,14 +9,29 @@ import { toast } from "sonner";
 
 const NIGERIAN_STATES = ["Abia", "Adamawa", "Akwa Ibom", "Anambra", "Bauchi", "Bayelsa", "Benue", "Borno", "Cross River", "Delta", "Ebonyi", "Edo", "Ekiti", "Enugu", "FCT - Abuja", "Gombe", "Imo", "Jigawa", "Kaduna", "Kano", "Katsina", "Kebbi", "Kogi", "Kwara", "Lagos", "Nasarawa", "Niger", "Ogun", "Ondo", "Osun", "Oyo", "Plateau", "Rivers", "Sokoto", "Taraba", "Yobe", "Zamfara"];
 
-export default function EditForm({ product }: { product: any }) {
+// 1. Define the type for your product
+interface Product {
+  id: string | number;
+  image_url: string | null;
+  escrow_enabled: boolean | null;
+  title: string;
+  price: number;
+  condition: string;
+  location_state: string;
+  location_city: string;
+  description: string;
+}
+
+// 2. Replace 'any' with your new 'Product' type
+export default function EditForm({ product }: { product: Product }) {
   const [loading, setLoading] = useState(false);
   const [imagePreview, setImagePreview] = useState<string | null>(product.image_url);
   const [escrowEnabled, setEscrowEnabled] = useState<boolean>(product.escrow_enabled ?? true);
 
   async function handleSubmit(formData: FormData) {
     setLoading(true);
-    const result = await updateProductAction(product.id, formData);
+    // 3. Convert product.id to a string to fix the TypeScript error
+    const result = await updateProductAction(String(product.id), formData);
     
     if (result?.error) {
       toast.error("Update Failed", { description: result.error });

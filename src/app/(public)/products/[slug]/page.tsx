@@ -7,7 +7,11 @@ import { startChatAction } from "@/app/buyer/messages/actions";
 import { requestOrderAction } from "@/app/buyer/actions";
 import FavouriteButton from "@/components/marketplace/FavouriteButton";
 import ShareButton from "@/components/marketplace/ShareButton";
-import ReportButton from "@/components/marketplace/ReportButton"; // <-- ADDED IMPORT
+import ReportButton from "@/components/marketplace/ReportButton";
+import SafeImage from "@/components/marketplace/SafeImage";
+
+// Ensure real-time data fetching
+export const dynamic = 'force-dynamic';
 
 const WhatsAppIcon = () => (
   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5">
@@ -71,11 +75,30 @@ export default async function ProductPage({ params }: { params: Promise<{ slug: 
     isFavourited = !!fav;
   }
 
-  // Format WhatsApp Link
-  const rawPhone = store?.whatsapp || store?.phone;
-  const cleanPhone = rawPhone?.replace(/\D/g, ''); 
-  const whatsappLink = cleanPhone 
-    ? `https://wa.me/${cleanPhone}?text=Hello%20${store?.name},%20I%20am%20interested%20in%20your%20listing%20"${product.title}"%20on%20OjaLoop.` 
+  // ==========================================
+  // BULLETPROOF WHATSAPP LINK FORMATTING
+  // ==========================================
+  const rawPhone = store?.whatsapp || store?.phone || "";
+  // 1. Remove all non-numeric characters (spaces, +, -, etc.)
+  let formattedPhone = rawPhone.replace(/\D/g, ""); 
+
+  if (formattedPhone) {
+    // 2. If it starts with '0' (e.g., 0803...), replace with '234'
+    if (formattedPhone.startsWith("0")) {
+      formattedPhone = "234" + formattedPhone.substring(1);
+    } 
+    // 3. If it starts with a valid Nigerian mobile prefix (7, 8, 9) but lacks country code
+    else if (formattedPhone.length === 10 && /^[789]/.test(formattedPhone)) {
+      formattedPhone = "234" + formattedPhone;
+    }
+    // 4. If it's already 234..., leave it alone.
+  }
+
+  // 5. URL-encode the message so special characters don't break the link
+  const whatsappMessage = encodeURIComponent(`Hello ${store?.name}, I am interested in your listing "${product.title}" on OjaLoop.`);
+  
+  const whatsappLink = formattedPhone 
+    ? `https://wa.me/${formattedPhone}?text=${whatsappMessage}` 
     : null;
 
   const sellerName = sellerProfile?.display_name || store?.name || "Seller";
@@ -96,7 +119,7 @@ export default async function ProductPage({ params }: { params: Promise<{ slug: 
         {/* Image Gallery */}
         <div className="w-full aspect-square bg-white md:rounded-3xl overflow-hidden relative border border-gray-200 shadow-sm">
           {product.image_url ? (
-             <img src={product.image_url} alt={product.title} className="w-full h-full object-cover" />
+             <SafeImage src={product.image_url} alt={product.title} className="w-full h-full object-cover" />
           ) : (
              <div className="w-full h-full flex items-center justify-center text-gray-400">No Image</div>
           )}
@@ -140,7 +163,7 @@ export default async function ProductPage({ params }: { params: Promise<{ slug: 
             <div className="flex items-center gap-4 mb-5">
               <div className="w-14 h-14 rounded-full bg-gray-100 border border-gray-200 overflow-hidden shrink-0">
                 {sellerAvatar ? (
-                  <img src={sellerAvatar} alt={sellerName} className="w-full h-full object-cover" />
+                  <SafeImage src={sellerAvatar} alt={sellerName} className="w-full h-full object-cover" />
                 ) : (
                   <div className="w-full h-full flex items-center justify-center font-bold text-gray-400 text-xl bg-gray-50">
                     {sellerName.charAt(0).toUpperCase()}
@@ -197,7 +220,7 @@ export default async function ProductPage({ params }: { params: Promise<{ slug: 
               </form>
             )}
 
-            {/* ADDED: REPORT BUTTON */}
+            {/* REPORT BUTTON */}
             {!isOwner && (
               <div className="mt-4 flex justify-center border-t border-gray-100 pt-4">
                 <ReportButton targetId={product.id} targetType="product" />
@@ -260,7 +283,7 @@ export default async function ProductPage({ params }: { params: Promise<{ slug: 
             {relatedProducts.map((p) => (
               <Link href={`/products/${p.slug}`} key={p.id} className="bg-white rounded-2xl border border-gray-100 overflow-hidden hover:shadow-md transition group">
                 <div className="h-40 bg-gray-100 overflow-hidden">
-                  <img src={p.image_url} alt={p.title} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" />
+                  <SafeImage src={p.image_url} alt={p.title} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" />
                 </div>
                 <div className="p-3">
                   <h4 className="font-bold text-sm text-gray-900 line-clamp-1">{p.title}</h4>
