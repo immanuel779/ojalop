@@ -4,7 +4,7 @@ import { redirect } from "next/navigation";
 import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
 import { revalidatePath } from "next/cache";
-import type { SupabaseClient } from "@supabase/supabase-js"; // <-- IMPORTED TYPE
+import type { SupabaseClient } from "@supabase/supabase-js";
 
 // ==========================================
 // SCHEMAS & VALIDATION
@@ -25,7 +25,6 @@ const productSchema = z.object({
 // HELPERS
 // ==========================================
 
-// FIX: Replaced 'any' with 'SupabaseClient'
 async function verifyProductOwnership(supabase: SupabaseClient, userId: string, productId: string) {
   const { data: product, error } = await supabase
     .from("products")
@@ -44,22 +43,49 @@ async function verifyProductOwnership(supabase: SupabaseClient, userId: string, 
   return { product };
 }
 
+async function uploadImages(supabase: SupabaseClient, userId: string, imageFiles: File[]) {
+  const uploadedUrls: string[] = [];
+
+  for (const file of imageFiles) {
+    if (file && file.size > 0) {
+      if (file.size > 5 * 1024 * 1024) {
+        throw new Error("One or more images exceed the 5MB limit.");
+      }
+      
+      const fileExt = file.name.split('.').pop();
+      const fileName = `${userId}-${Date.now()}-${Math.random().toString(36).substring(7)}.${fileExt}`;
+      
+      const { error: uploadError } = await supabase.storage.from("product-images").upload(fileName, file);
+      
+      if (uploadError) {
+        throw new Error(`Failed to upload image: ${uploadError.message}`);
+      }
+      
+      const { data: { publicUrl } } = supabase.storage.from("product-images").getPublicUrl(fileName);
+      uploadedUrls.push(publicUrl);
+    }
+  }
+
+  return uploadedUrls;
+}
+
 // ==========================================
-// 1. CREATE PRODUCT
+// 1. CREATE PRODUCT (With Multiple Images)
 // ==========================================
 
 export async function createProductAction(formData: FormData) {
+  let isSuccess = false;
+  let redirectUrl = "";
+
   try {
     const supabase = await createClient();
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return { error: "You must be logged in." };
 
-    // 1. Get User's Store
     const { data: store } = await supabase.from("stores").select("id").eq("owner_id", user.id).single();
     if (!store) return { error: "You must create a store first." };
 
-    // 2. Validate Input
-    const intent = formData.get("intent") as string; // "draft" or "publish"
+    const intent = formData.get("intent") as string;
     const status = intent === "draft" ? "draft" : "approved";
 
     const parsed = productSchema.safeParse({
@@ -75,33 +101,23 @@ export async function createProductAction(formData: FormData) {
 
     if (!parsed.success) return { error: parsed.error.issues[0].message };
 
-    // 3. Handle Image Upload
-    const imageFile = formData.get("image") as File;
-    let publicImageUrl = "";
+    const imageFiles = formData.getAll("images") as File[];
+    let uploadedImageUrls: string[] = [];
 
-    if (imageFile && imageFile.size > 0) {
-      if (imageFile.size > 5 * 1024 * 1024) return { error: "Image must be less than 5MB." };
-      
-      const fileExt = imageFile.name.split('.').pop();
-      const fileName = `${user.id}-${Date.now()}.${fileExt}`;
-      
-      const { error: uploadError } = await supabase.storage.from("product-images").upload(fileName, imageFile);
-      if (uploadError) return { error: `Failed to upload image: ${uploadError.message}` };
-      
-      const { data: { publicUrl } } = supabase.storage.from("product-images").getPublicUrl(fileName);
-      publicImageUrl = publicUrl;
+    if (imageFiles.length > 0 && imageFiles[0].size > 0) {
+      uploadedImageUrls = await uploadImages(supabase, user.id, imageFiles);
     } else if (status !== "draft") {
-      return { error: "Please upload an image for the product before publishing." };
+      return { error: "Please upload at least one image before publishing." };
     }
 
-    // 4. Generate Slug
+    const coverImageUrl = uploadedImageUrls[0] || "";
+
     const slug = parsed.data.title
       .toLowerCase()
       .replace(/[^a-z0-9]+/g, "-")
       .replace(/(^-|-$)+/g, "") + "-" + Math.floor(Math.random() * 10000);
 
-    // 5. Save to Database
-    const { error } = await supabase.from("products").insert({
+    const { data: productData, error } = await supabase.from("products").insert({
       store_id: store.id,
       title: parsed.data.title,
       slug: slug,
@@ -111,22 +127,39 @@ export async function createProductAction(formData: FormData) {
       condition: parsed.data.condition,
       location_state: parsed.data.location_state,
       location_city: parsed.data.location_city,
-      image_url: publicImageUrl,
+      image_url: coverImageUrl,
       escrow_enabled: parsed.data.escrow_enabled,
       status: status, 
       is_active: true,
-    });
+    }).select().single();
 
     if (error) return { error: `Database error: ${error.message}` };
 
-    revalidatePath("/");
-    revalidatePath("/seller/dashboard");
-    
-    redirect(`/seller/dashboard?success=${status === 'draft' ? 'Saved as Draft' : 'Published Successfully'}`);
+    if (productData && uploadedImageUrls.length > 0) {
+      const galleryImages = uploadedImageUrls.map((url, index) => ({
+        product_id: productData.id,
+        storage_path: url,
+        is_cover: index === 0,
+        sort_order: index
+      }));
+      
+      await supabase.from("product_images").insert(galleryImages);
+    }
+
+    isSuccess = true;
+    redirectUrl = `/seller/dashboard?success=${status === 'draft' ? 'Saved as Draft' : 'Published Successfully'}`;
 
   } catch (err) {
+    // FIX 1: Handle unknown error type
     console.error("Create Product Error:", err);
-    return { error: "An unexpected error occurred. Please try again." };
+    const message = err instanceof Error ? err.message : "An unexpected error occurred.";
+    return { error: message };
+  }
+
+  if (isSuccess) {
+    revalidatePath("/");
+    revalidatePath("/seller/dashboard");
+    redirect(redirectUrl);
   }
 }
 
@@ -140,21 +173,27 @@ export async function deleteProductAction(productId: string) {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return { error: "Unauthorized" };
 
-    // SECURITY: Verify the user actually owns this product
-    const { error: authError, product } = await verifyProductOwnership(supabase, user.id, productId);
+    const { error: authError } = await verifyProductOwnership(supabase, user.id, productId);
     if (authError) return { error: authError };
 
-    // Delete the product
+    const { data: gallery } = await supabase
+      .from("product_images")
+      .select("storage_path")
+      .eq("product_id", productId);
+
+    const pathsToRemove: string[] = [];
+    
+    gallery?.forEach(img => {
+      const path = img.storage_path.split('/').pop();
+      if (path) pathsToRemove.push(path);
+    });
+
+    if (pathsToRemove.length > 0) {
+      await supabase.storage.from("product-images").remove(pathsToRemove);
+    }
+
     const { error } = await supabase.from("products").delete().eq("id", productId);
     if (error) return { error: error.message };
-
-    // OPTIONAL: Best-effort delete the image from storage
-    if (product?.image_url) {
-      const imagePath = product.image_url.split('/').pop();
-      if (imagePath) {
-        await supabase.storage.from("product-images").remove([imagePath]);
-      }
-    }
     
     revalidatePath("/seller/dashboard");
     revalidatePath("/");
@@ -167,7 +206,7 @@ export async function deleteProductAction(productId: string) {
 }
 
 // ==========================================
-// 3. TOGGLE VISIBILITY (Hide/Show)
+// 3. TOGGLE VISIBILITY
 // ==========================================
 
 export async function toggleProductVisibilityAction(productId: string, currentStatus: boolean) {
@@ -176,7 +215,6 @@ export async function toggleProductVisibilityAction(productId: string, currentSt
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return { error: "Unauthorized" };
 
-    // SECURITY: Verify ownership
     const { error: authError } = await verifyProductOwnership(supabase, user.id, productId);
     if (authError) return { error: authError };
 
@@ -202,16 +240,17 @@ export async function toggleProductVisibilityAction(productId: string, currentSt
 // ==========================================
 
 export async function updateProductAction(id: string, formData: FormData) {
+  let isSuccess = false;
+  let redirectUrl = "";
+
   try {
     const supabase = await createClient();
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return { error: "Unauthorized" };
 
-    // SECURITY: Verify ownership
     const { error: authError } = await verifyProductOwnership(supabase, user.id, id);
     if (authError) return { error: authError };
 
-    // 1. Validate Input
     const parsed = productSchema.safeParse({
       title: formData.get("title"),
       description: formData.get("description"),
@@ -225,43 +264,50 @@ export async function updateProductAction(id: string, formData: FormData) {
 
     if (!parsed.success) return { error: parsed.error.issues[0].message };
 
-    let publicImageUrl = formData.get("current_image") as string;
+    let coverImageUrl = formData.get("current_image") as string;
 
-    // 2. Handle New Image Upload
-    const imageFile = formData.get("image") as File;
-    if (imageFile && imageFile.size > 0) {
-      if (imageFile.size > 5 * 1024 * 1024) return { error: "Image must be less than 5MB." };
-      
-      const fileExt = imageFile.name.split('.').pop();
-      const fileName = `${user.id}-${Date.now()}.${fileExt}`;
-      
-      const { error: uploadError } = await supabase.storage.from("product-images").upload(fileName, imageFile);
-      if (uploadError) return { error: "Failed to upload new image." };
-      
-      const { data: { publicUrl } } = supabase.storage.from("product-images").getPublicUrl(fileName);
-      publicImageUrl = publicUrl;
+    const newImageFiles = formData.getAll("images") as File[];
+    if (newImageFiles.length > 0 && newImageFiles[0].size > 0) {
+      const uploadedImageUrls = await uploadImages(supabase, user.id, newImageFiles);
+      if (uploadedImageUrls.length > 0) {
+        coverImageUrl = uploadedImageUrls[0];
+        
+        const galleryImages = uploadedImageUrls.map((url, index) => ({
+          product_id: id,
+          storage_path: url,
+          is_cover: index === 0,
+          sort_order: index
+        }));
+        await supabase.from("product_images").insert(galleryImages);
+      }
     }
 
-    // 3. Update Database
     const { error } = await supabase.from("products").update({
-      title: formData.get("title") as string,
-      description: formData.get("description") as string,
-      price: Number(formData.get("price")),
-      condition: formData.get("condition") as string,
-      location_state: formData.get("location_state") as string,
-      location_city: formData.get("location_city") as string,
-      escrow_enabled: formData.get("escrow_enabled") === "true",
-      image_url: publicImageUrl,
+      title: parsed.data.title,
+      description: parsed.data.description,
+      price: parsed.data.price,
+      condition: parsed.data.condition,
+      location_state: parsed.data.location_state,
+      location_city: parsed.data.location_city,
+      escrow_enabled: parsed.data.escrow_enabled,
+      image_url: coverImageUrl,
     }).eq("id", id);
 
     if (error) return { error: error.message };
     
-    revalidatePath("/seller/dashboard");
-    revalidatePath("/");
-    redirect("/seller/dashboard?success=Listing updated successfully");
+    isSuccess = true;
+    redirectUrl = "/seller/dashboard?success=Listing updated successfully";
 
   } catch (err) {
+    // FIX 2: Handle unknown error type
     console.error("Update Product Error:", err);
-    return { error: "An unexpected error occurred while updating." };
+    const message = err instanceof Error ? err.message : "An unexpected error occurred while updating.";
+    return { error: message };
+  }
+
+  if (isSuccess) {
+    revalidatePath("/seller/dashboard");
+    revalidatePath("/");
+    redirect(redirectUrl);
   }
 }

@@ -2,7 +2,7 @@
 "use client";
 
 import { useState } from "react";
-import { useFormStatus } from "react-dom"; // <-- Import useFormStatus
+import { useFormStatus } from "react-dom";
 import Link from "next/link";
 import { ArrowLeft, UploadCloud, ShieldAlert, ShieldCheck, Loader2, CheckCircle2, X, Image as ImageIcon } from "lucide-react";
 import { createProductAction } from "./actions";
@@ -15,7 +15,6 @@ const NIGERIAN_STATES = [
   "Taraba", "Yobe", "Zamfara"
 ];
 
-// Custom Button Component that knows which button was clicked
 function SubmitButton({ intent, defaultText, pendingText, icon, variant }: { intent: "draft" | "publish", defaultText: string, pendingText: string, icon: React.ReactNode, variant: "draft" | "publish" }) {
   const { pending, data } = useFormStatus();
   const isThisButtonPending = pending && data?.get("intent") === intent;
@@ -26,52 +25,45 @@ function SubmitButton({ intent, defaultText, pendingText, icon, variant }: { int
     : "bg-gray-100 text-gray-700 hover:bg-gray-200";
 
   return (
-    <button 
-      type="submit" 
-      name="intent" 
-      value={intent} 
-      disabled={pending}
-      className={`${base} ${styles}`}
-    >
-      {isThisButtonPending ? (
-        <><Loader2 className="animate-spin" size={24} /> {pendingText}</>
-      ) : (
-        <>{icon} {defaultText}</>
-      )}
+    <button type="submit" name="intent" value={intent} disabled={pending} className={`${base} ${styles}`}>
+      {isThisButtonPending ? <><Loader2 className="animate-spin" size={24} /> {pendingText}</> : <>{icon} {defaultText}</>}
     </button>
   );
 }
 
-export default function PostAdForm({ categories }: { categories: {id: string, name: string}[] }) {
+export default function PostAdForm({ categories }: { categories: {id: string, name: string, type: string}[] }) {
   const [error, setError] = useState<string | null>(null);
-  const [imagePreview, setImagePreview] = useState<string | null>(null);
+  const [imagePreviews, setImagePreviews] = useState<{ file: File, url: string }[]>([]);
   const [escrowEnabled, setEscrowEnabled] = useState(true);
 
   async function handleSubmit(formData: FormData) {
     setError(null);
-    // The loading state is now handled by useFormStatus in the buttons
     const result = await createProductAction(formData);
     if (result?.error) setError(result.error);
   }
 
   function handleImageChange(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (file) {
-      if (file.size > 5 * 1024 * 1024) {
-        setError("Image is too large. Maximum size is 5MB.");
-        e.target.value = ""; 
-        return;
-      }
-      setError(null);
-      setImagePreview(URL.createObjectURL(file));
+    const files = e.target.files;
+    if (files) {
+      const newPreviews = Array.from(files).map(file => {
+        if (file.size > 5 * 1024 * 1024) {
+          setError("One or more images exceed 5MB.");
+          return null;
+        }
+        return { file, url: URL.createObjectURL(file) };
+      }).filter(Boolean) as { file: File, url: string }[];
+
+      setImagePreviews(prev => [...prev, ...newPreviews]);
+      e.target.value = ""; // Reset input so the same file can be selected again if removed
     }
   }
 
-  function removeImage() {
-    setImagePreview(null);
-    const fileInput = document.getElementById("image-upload") as HTMLInputElement;
-    if (fileInput) fileInput.value = ""; 
+  function removeImage(index: number) {
+    setImagePreviews(prev => prev.filter((_, i) => i !== index));
   }
+
+  // Filter out categories that are ONLY for services (Jobs, etc.)
+  const productCategories = categories.filter(cat => cat.type === "product" || cat.type === "both");
 
   return (
     <div className="bg-gray-50 min-h-screen pb-24 md:pb-12">
@@ -90,66 +82,73 @@ export default function PostAdForm({ categories }: { categories: {id: string, na
       <div className="max-w-4xl mx-auto px-4 mt-8">
         <form action={handleSubmit} className="space-y-6 md:space-y-8">
           
+          {/* SECTION 1: PHOTOS */}
           <div className="bg-white p-6 md:p-8 rounded-3xl border border-gray-200 shadow-sm">
             <div className="flex items-center gap-4 mb-6">
               <div className="w-10 h-10 bg-orange-100 text-orange-600 rounded-xl flex items-center justify-center font-bold text-lg shrink-0">1</div>
               <div>
-                <h3 className="font-bold text-gray-900 text-lg">Photos</h3>
+                <h3 className="font-bold text-gray-900 text-lg">Photos (Up to 5)</h3>
                 <p className="text-sm text-gray-500">Clear, well-lit photos sell faster. The first one is your cover.</p>
               </div>
             </div>
             
-            <input type="file" name="image" id="image-upload" accept="image/*" onChange={handleImageChange} className="hidden" required={!imagePreview} />
+            <input type="file" name="images" id="image-upload" accept="image/*" multiple onChange={handleImageChange} className="hidden" />
 
-            {imagePreview ? (
-              <div className="relative border-2 border-gray-200 rounded-2xl overflow-hidden aspect-video">
-                <img src={imagePreview} alt="Preview" className="w-full h-full object-cover" />
-                <button type="button" onClick={removeImage} className="absolute top-3 right-3 bg-red-600 text-white px-4 py-2 rounded-full shadow-lg hover:bg-red-700 transition flex items-center gap-2 font-bold text-sm">
-                  <X size={16} /> Remove Photo
-                </button>
-              </div>
-            ) : (
-              <label htmlFor="image-upload" className="border-2 border-dashed border-gray-300 bg-gray-50 rounded-2xl p-8 md:p-12 flex flex-col items-center justify-center text-center hover:bg-orange-50 hover:border-orange-400 transition cursor-pointer group max-w-2xl mx-auto">
-                <div className="w-16 h-16 bg-white rounded-full flex items-center justify-center shadow-sm mb-4 group-hover:scale-110 group-hover:shadow-md transition-all">
-                  <UploadCloud className="text-orange-500" size={28} />
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+              {imagePreviews.map((img, index) => (
+                <div key={index} className="relative border-2 border-gray-200 rounded-2xl overflow-hidden aspect-square group">
+                  <img src={img.url} alt="Preview" className="w-full h-full object-cover" />
+                  {index === 0 && (
+                    <div className="absolute bottom-2 left-2 bg-orange-600 text-white text-[10px] font-bold px-2 py-1 rounded shadow-md">
+                      COVER PHOTO
+                    </div>
+                  )}
+                  <button type="button" onClick={() => removeImage(index)} className="absolute top-2 right-2 bg-red-600 text-white p-1.5 rounded-full shadow-lg hover:bg-red-700 transition opacity-0 group-hover:opacity-100">
+                    <X size={16} />
+                  </button>
                 </div>
-                <span className="text-base font-bold text-gray-900 mb-1">Upload a Photo</span>
-                <span className="text-sm text-gray-500 mb-4">Click to browse from your device</span>
-                <span className="text-xs font-bold text-gray-400 bg-white border border-gray-200 px-3 py-1.5 rounded-full flex items-center gap-2">
-                  <ImageIcon size={14} /> JPG, PNG, WEBP (Max 5MB)
-                </span>
-              </label>
-            )}
+              ))}
+
+              {imagePreviews.length < 5 && (
+                <label htmlFor="image-upload" className="border-2 border-dashed border-gray-300 bg-gray-50 rounded-2xl aspect-square flex flex-col items-center justify-center text-center hover:bg-orange-50 hover:border-orange-400 transition cursor-pointer group">
+                  <div className="w-12 h-12 bg-white rounded-full flex items-center justify-center shadow-sm mb-2 group-hover:scale-110 transition-all">
+                    <UploadCloud className="text-orange-500" size={24} />
+                  </div>
+                  <span className="text-sm font-bold text-gray-900">Add Photo</span>
+                  <span className="text-xs text-gray-500 mt-1">{5 - imagePreviews.length} slots left</span>
+                </label>
+              )}
+            </div>
           </div>
 
+          {/* SECTION 2: ITEM DETAILS */}
           <div className="bg-white p-6 md:p-8 rounded-3xl border border-gray-200 shadow-sm">
             <div className="flex items-center gap-4 mb-6">
               <div className="w-10 h-10 bg-orange-100 text-orange-600 rounded-xl flex items-center justify-center font-bold text-lg shrink-0">2</div>
               <div>
                 <h3 className="font-bold text-gray-900 text-lg">Item Details</h3>
-                <p className="text-sm text-gray-500">What are you selling and how will buyers find it?</p>
               </div>
             </div>
 
             <div className="space-y-6">
               <div>
                 <label className="block text-sm font-bold text-gray-900 mb-2">Listing Title <span className="text-red-500">*</span></label>
-                <input name="title" required placeholder="e.g. Toyota Camry 2020 XLE or iPhone 14 Pro Max" className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3.5 text-base outline-none focus:bg-white focus:border-orange-500 focus:ring-4 focus:ring-orange-500/10 transition" />
+                <input name="title" required placeholder="e.g. Toyota Camry 2020 XLE or iPhone 14 Pro Max" className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3.5 text-base outline-none focus:bg-white focus:border-orange-500 transition" />
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div>
                   <label className="block text-sm font-bold text-gray-900 mb-2">Category <span className="text-red-500">*</span></label>
-                  <select name="category_id" required className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3.5 text-base outline-none focus:bg-white focus:border-orange-500 focus:ring-4 focus:ring-orange-500/10 transition text-gray-700 cursor-pointer">
+                  <select name="category_id" required className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3.5 text-base outline-none focus:bg-white focus:border-orange-500 transition text-gray-700">
                     <option value="">Select a Category</option>
-                    {categories.map((cat) => (
+                    {productCategories.map((cat) => (
                       <option key={cat.id} value={cat.id}>{cat.name}</option>
                     ))}
                   </select>
                 </div>
                 <div>
                   <label className="block text-sm font-bold text-gray-900 mb-2">Condition <span className="text-red-500">*</span></label>
-                  <select name="condition" required className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3.5 text-base outline-none focus:bg-white focus:border-orange-500 focus:ring-4 focus:ring-orange-500/10 transition text-gray-700 cursor-pointer">
+                  <select name="condition" required className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3.5 text-base outline-none focus:bg-white focus:border-orange-500 transition text-gray-700">
                     <option value="">Select Condition</option>
                     <option value="Brand New">Brand New</option>
                     <option value="Like New">Like New (Open Box)</option>
@@ -162,12 +161,12 @@ export default function PostAdForm({ categories }: { categories: {id: string, na
             </div>
           </div>
 
+          {/* SECTION 3: PRICE & LOCATION */}
           <div className="bg-white p-6 md:p-8 rounded-3xl border border-gray-200 shadow-sm">
             <div className="flex items-center gap-4 mb-6">
               <div className="w-10 h-10 bg-orange-100 text-orange-600 rounded-xl flex items-center justify-center font-bold text-lg shrink-0">3</div>
               <div>
                 <h3 className="font-bold text-gray-900 text-lg">Price & Location</h3>
-                <p className="text-sm text-gray-500">Set your price and where buyers can find the item.</p>
               </div>
             </div>
 
@@ -176,15 +175,14 @@ export default function PostAdForm({ categories }: { categories: {id: string, na
                 <label className="block text-sm font-bold text-gray-900 mb-2">Price <span className="text-red-500">*</span></label>
                 <div className="relative max-w-md">
                   <span className="absolute left-4 top-1/2 -translate-y-1/2 font-bold text-gray-900 text-lg">₦</span>
-                  <input name="price" type="number" required min="100" placeholder="e.g. 750000" className="w-full bg-gray-50 border border-gray-200 rounded-xl pl-10 pr-4 py-3.5 text-lg font-bold outline-none focus:bg-white focus:border-orange-500 focus:ring-4 focus:ring-orange-500/10 transition" />
+                  <input name="price" type="number" required min="100" placeholder="e.g. 750000" className="w-full bg-gray-50 border border-gray-200 rounded-xl pl-10 pr-4 py-3.5 text-lg font-bold outline-none focus:bg-white focus:border-orange-500 transition" />
                 </div>
-                <p className="text-xs text-gray-500 mt-2 font-medium">Minimum price allowed is ₦100.</p>
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div>
                   <label className="block text-sm font-bold text-gray-900 mb-2">State <span className="text-red-500">*</span></label>
-                  <select name="location_state" required className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3.5 text-base outline-none focus:bg-white focus:border-orange-500 focus:ring-4 focus:ring-orange-500/10 transition text-gray-700 cursor-pointer">
+                  <select name="location_state" required className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3.5 text-base outline-none focus:bg-white focus:border-orange-500 transition text-gray-700">
                     <option value="">Select a State</option>
                     {NIGERIAN_STATES.map((state) => (
                       <option key={state} value={state}>{state}</option>
@@ -193,31 +191,31 @@ export default function PostAdForm({ categories }: { categories: {id: string, na
                 </div>
                 <div>
                   <label className="block text-sm font-bold text-gray-900 mb-2">LGA / City / Area <span className="text-red-500">*</span></label>
-                  <input name="location_city" required placeholder="e.g. Ikeja, Computer Village" className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3.5 text-base outline-none focus:bg-white focus:border-orange-500 focus:ring-4 focus:ring-orange-500/10 transition" />
+                  <input name="location_city" required placeholder="e.g. Ikeja, Computer Village" className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3.5 text-base outline-none focus:bg-white focus:border-orange-500 transition" />
                 </div>
               </div>
             </div>
           </div>
 
+          {/* SECTION 4: DESCRIPTION */}
           <div className="bg-white p-6 md:p-8 rounded-3xl border border-gray-200 shadow-sm">
             <div className="flex items-center gap-4 mb-6">
               <div className="w-10 h-10 bg-orange-100 text-orange-600 rounded-xl flex items-center justify-center font-bold text-lg shrink-0">4</div>
               <div>
                 <h3 className="font-bold text-gray-900 text-lg">Description</h3>
-                <p className="text-sm text-gray-500">Be specific about condition, what&apos;s included, and any defects.</p>
               </div>
             </div>
             <div>
-              <textarea name="description" required rows={8} className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-4 text-base outline-none focus:bg-white focus:border-orange-500 focus:ring-4 focus:ring-orange-500/10 transition resize-y" placeholder="Describe your item in detail. Include key features, warranty status, and reasons for selling..."></textarea>
+              <textarea name="description" required rows={8} className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-4 text-base outline-none focus:bg-white focus:border-orange-500 transition resize-y" placeholder="Describe your item in detail..."></textarea>
             </div>
           </div>
 
+          {/* SECTION 5: SELLING OPTIONS */}
           <div className="bg-white p-6 md:p-8 rounded-3xl border border-gray-200 shadow-sm">
             <div className="flex items-center gap-4 mb-6">
               <div className="w-10 h-10 bg-orange-100 text-orange-600 rounded-xl flex items-center justify-center font-bold text-lg shrink-0">5</div>
               <div>
                 <h3 className="font-bold text-gray-900 text-lg">Selling Options</h3>
-                <p className="text-sm text-gray-500">Protection and visibility for this listing.</p>
               </div>
             </div>
 
@@ -233,7 +231,6 @@ export default function PostAdForm({ categories }: { categories: {id: string, na
                   <p className="text-sm text-gray-600 mt-0.5">Buyers can pay safely through Escrow protection.</p>
                 </div>
               </div>
-              
               <button type="button" onClick={() => setEscrowEnabled(!escrowEnabled)} className={`w-14 h-8 rounded-full relative cursor-pointer shadow-inner shrink-0 self-end sm:self-auto transition-colors duration-300 ${escrowEnabled ? 'bg-orange-600' : 'bg-gray-300'}`}>
                 <div className={`w-6 h-6 bg-white rounded-full absolute top-1 shadow-sm transition-transform duration-300 ${escrowEnabled ? 'translate-x-7' : 'translate-x-1'}`}></div>
               </button>
@@ -252,22 +249,9 @@ export default function PostAdForm({ categories }: { categories: {id: string, na
               </div>
             )}
 
-            {/* UPDATED BUTTONS */}
             <div className="flex flex-col sm:flex-row gap-4 mt-8">
-              <SubmitButton 
-                intent="draft" 
-                defaultText="Save as Draft" 
-                pendingText="Saving Draft..." 
-                icon={null} 
-                variant="draft" 
-              />
-              <SubmitButton 
-                intent="publish" 
-                defaultText="Publish Listing" 
-                pendingText="Publishing..." 
-                icon={<CheckCircle2 size={20} />} 
-                variant="publish" 
-              />
+              <SubmitButton intent="draft" defaultText="Save as Draft" pendingText="Saving Draft..." icon={null} variant="draft" />
+              <SubmitButton intent="publish" defaultText="Publish Listing" pendingText="Publishing..." icon={<CheckCircle2 size={20} />} variant="publish" />
             </div>
           </div>
         </form>
