@@ -1,221 +1,749 @@
-/* eslint-disable @next/next/no-img-element */
 "use client";
 
-import { useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { ArrowLeft, CheckCircle2, Loader2, UploadCloud, ShieldCheck, ShieldAlert, Image as ImageIcon, Save } from "lucide-react";
+import {
+  ArrowLeft, UploadCloud, X, ShieldCheck, ShieldAlert,
+  Save, Eye, Image as ImageIcon,
+  Star, Trash2, Tag, Truck, Store, Zap, Video, ChevronLeft,
+  ChevronRight, CheckCircle2,
+} from "lucide-react";
 import { updateProductAction } from "@/app/seller/products/new/actions";
 import { toast } from "sonner";
 
-const NIGERIAN_STATES = ["Abia", "Adamawa", "Akwa Ibom", "Anambra", "Bauchi", "Bayelsa", "Benue", "Borno", "Cross River", "Delta", "Ebonyi", "Edo", "Ekiti", "Enugu", "FCT - Abuja", "Gombe", "Imo", "Jigawa", "Kaduna", "Kano", "Katsina", "Kebbi", "Kogi", "Kwara", "Lagos", "Nasarawa", "Niger", "Ogun", "Ondo", "Osun", "Oyo", "Plateau", "Rivers", "Sokoto", "Taraba", "Yobe", "Zamfara"];
+// ============================================================
+// CONSTANTS
+// ============================================================
+const NIGERIAN_STATES = ["Abia","Adamawa","Akwa Ibom","Anambra","Bauchi","Bayelsa","Benue","Borno","Cross River","Delta","Ebonyi","Edo","Ekiti","Enugu","FCT - Abuja","Gombe","Imo","Jigawa","Kaduna","Kano","Katsina","Kebbi","Kogi","Kwara","Lagos","Nasarawa","Niger","Ogun","Ondo","Osun","Oyo","Plateau","Rivers","Sokoto","Taraba","Yobe","Zamfara"];
+const CONDITIONS = ["Brand New","Like New","Foreign Used","Nigerian Used","Refurbished"];
+const MAX_IMAGES = 5;
+const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+const MAX_TAGS = 10;
+const ALLOWED_TYPES = ["image/jpeg","image/jpg","image/png","image/webp"];
 
-// 1. Define the type for your product
+// ============================================================
+// TYPES
+// ============================================================
 interface Product {
   id: string | number;
   image_url: string | null;
-  escrow_enabled: boolean | null;
   title: string;
   price: number;
   condition: string;
   location_state: string;
   location_city: string;
   description: string;
+  escrow_enabled: boolean | null;
+  negotiable?: boolean | null;
+  delivery_pickup?: boolean | null;
+  delivery_shipping?: boolean | null;
+  boost?: boolean | null;
+  video_url?: string | null;
+  tags?: string[] | null;
 }
 
-// 2. Replace 'any' with your new 'Product' type
-export default function EditForm({ product }: { product: Product }) {
-  const [loading, setLoading] = useState(false);
-  const [imagePreview, setImagePreview] = useState<string | null>(product.image_url);
-  const [escrowEnabled, setEscrowEnabled] = useState<boolean>(product.escrow_enabled ?? true);
+interface Props {
+  product: Product;
+}
 
-  async function handleSubmit(formData: FormData) {
+// ============================================================
+// COMPONENT
+// ============================================================
+export default function EditForm({ product }: Props) {
+  const [loading, setLoading] = useState(false);
+  const [images, setImages] = useState<File[]>([]);
+  const [previews, setPreviews] = useState<string[]>([]);
+  const [escrowEnabled, setEscrowEnabled] = useState(product.escrow_enabled ?? true);
+  const [negotiable, setNegotiable] = useState(product.negotiable ?? false);
+  const [deliveryPickup, setDeliveryPickup] = useState(product.delivery_pickup ?? true);
+  const [deliveryShipping, setDeliveryShipping] = useState(product.delivery_shipping ?? false);
+  const [boost, setBoost] = useState(product.boost ?? false);
+  const [tags, setTags] = useState<string[]>(product.tags ?? []);
+  const [tagInput, setTagInput] = useState("");
+  const [videoUrl, setVideoUrl] = useState(product.video_url ?? "");
+  const [progress, setProgress] = useState(0);
+  const [titleLen, setTitleLen] = useState(product.title.length);
+  const [descLen, setDescLen] = useState(product.description.length);
+  const [showPreview, setShowPreview] = useState(false);
+  const [previewData, setPreviewData] = useState<Record<string, string>>({});
+  const [currentImage, setCurrentImage] = useState(product.image_url ?? "");
+
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const formRef = useRef<HTMLFormElement>(null);
+
+  // ---------- IMAGES ----------
+  function addImages(files: FileList | File[]) {
+    const incoming = Array.from(files);
+    const accepted: File[] = [];
+    const newPreviews: string[] = [];
+    for (const file of incoming) {
+      if (images.length + accepted.length >= MAX_IMAGES) {
+        toast.error("Too many images", { description: `Max ${MAX_IMAGES}.` });
+        break;
+      }
+      if (!ALLOWED_TYPES.includes(file.type)) {
+        toast.error("Invalid file", { description: `${file.name} is not JPG/PNG/WEBP.` });
+        continue;
+      }
+      if (file.size > MAX_IMAGE_BYTES) {
+        toast.error("File too large", { description: `${file.name} exceeds 5MB.` });
+        continue;
+      }
+      accepted.push(file);
+      newPreviews.push(URL.createObjectURL(file));
+    }
+    if (accepted.length) {
+      setImages(prev => [...prev, ...accepted]);
+      setPreviews(prev => [...prev, ...newPreviews]);
+    }
+  }
+
+  function removeImage(index: number) {
+    URL.revokeObjectURL(previews[index]);
+    setImages(prev => prev.filter((_, i) => i !== index));
+    setPreviews(prev => prev.filter((_, i) => i !== index));
+  }
+
+  function makeCover(index: number) {
+    if (index === 0) return;
+    setImages(prev => {
+      const copy = [...prev];
+      const [picked] = copy.splice(index, 1);
+      return [picked, ...copy];
+    });
+    setPreviews(prev => {
+      const copy = [...prev];
+      const [picked] = copy.splice(index, 1);
+      return [picked, ...copy];
+    });
+  }
+
+  function moveImage(index: number, direction: -1 | 1) {
+    const target = index + direction;
+    if (target < 0 || target >= images.length) return;
+    setImages(prev => {
+      const copy = [...prev];
+      [copy[index], copy[target]] = [copy[target], copy[index]];
+      return copy;
+    });
+    setPreviews(prev => {
+      const copy = [...prev];
+      [copy[index], copy[target]] = [copy[target], copy[index]];
+      return copy;
+    });
+  }
+
+  function onFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    if (e.target.files?.length) addImages(e.target.files);
+    e.target.value = "";
+  }
+
+  function onDrop(e: React.DragEvent<HTMLDivElement>) {
+    e.preventDefault();
+    if (e.dataTransfer.files?.length) addImages(e.dataTransfer.files);
+  }
+
+  // ---------- TAGS ----------
+  function addTag() {
+    const t = tagInput.trim().toLowerCase();
+    if (!t) return;
+    if (tags.includes(t)) { setTagInput(""); return; }
+    if (tags.length >= MAX_TAGS) { toast.error(`Max ${MAX_TAGS} tags.`); return; }
+    setTags([...tags, t]);
+    setTagInput("");
+  }
+  function removeTag(t: string) { setTags(tags.filter(x => x !== t)); }
+
+  // ---------- PROGRESS (wrapped in useCallback to fix eslint) ----------
+  const updateProgress = useCallback(() => {
+    if (!formRef.current) return;
+    const fd = new FormData(formRef.current);
+    let p = 0;
+    if (images.length > 0 || currentImage) p += 20;
+    if (String(fd.get("title") ?? "").length >= 5) p += 10;
+    if (String(fd.get("condition") ?? "")) p += 10;
+    if (Number(fd.get("price")) >= 100) p += 10;
+    if (String(fd.get("location_state") ?? "")) p += 10;
+    if (String(fd.get("location_city") ?? "").length >= 2) p += 10;
+    if (String(fd.get("description") ?? "").length >= 20) p += 10;
+    if (deliveryPickup || deliveryShipping) p += 10;
+    if (tags.length > 0) p += 10;
+    setProgress(p);
+    setTitleLen(String(fd.get("title") ?? "").length);
+    setDescLen(String(fd.get("description") ?? "").length);
+  }, [images.length, deliveryPickup, deliveryShipping, currentImage, tags.length]);
+
+  useEffect(() => {
+    updateProgress();
+  }, [updateProgress]);
+
+  // ---------- PREVIEW ----------
+  function openPreview() {
+    if (!formRef.current) return;
+    const fd = new FormData(formRef.current);
+    setPreviewData({
+      title: String(fd.get("title") ?? ""),
+      price: String(fd.get("price") ?? ""),
+      condition: String(fd.get("condition") ?? ""),
+      state: String(fd.get("location_state") ?? ""),
+      city: String(fd.get("location_city") ?? ""),
+      description: String(fd.get("description") ?? ""),
+    });
+    setShowPreview(true);
+  }
+
+  // ---------- SUBMIT ----------
+  async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    if (!formRef.current) return;
+
+    const formData = new FormData(formRef.current);
+
+    // Accept existing image OR new upload
+    if (images.length === 0 && !currentImage) {
+      toast.error("Image required", { description: "Please upload at least one image." });
+      return;
+    }
+
+    formData.delete("images");
+    for (const file of images) formData.append("images", file, file.name);
+
+    formData.set("tags", tags.join(","));
+    formData.set("negotiable", String(negotiable));
+    formData.set("delivery_pickup", String(deliveryPickup));
+    formData.set("delivery_shipping", String(deliveryShipping));
+    formData.set("boost", String(boost));
+    formData.set("video_url", videoUrl);
+    formData.set("escrow_enabled", String(escrowEnabled));
+    formData.set("current_image", currentImage);
+
     setLoading(true);
-    // 3. Convert product.id to a string to fix the TypeScript error
-    const result = await updateProductAction(String(product.id), formData);
-    
-    if (result?.error) {
-      toast.error("Update Failed", { description: result.error });
+    try {
+      const result = await updateProductAction(String(product.id), formData);
+      if (!result.success) {
+        toast.error("Could not save", { description: result.error });
+        setLoading(false);
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg.includes("NEXT_REDIRECT") || msg.includes("NEXT_NOT_FOUND")) return;
+      toast.error("Something went wrong", { description: "Please try again." });
       setLoading(false);
     }
   }
 
-  function handleImageChange(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (file) {
-      setImagePreview(URL.createObjectURL(file));
+  // ---------- KEYBOARD SHORTCUTS ----------
+  useEffect(() => {
+    function onKey(ev: KeyboardEvent) {
+      if ((ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === "s") {
+        ev.preventDefault();
+        document.getElementById("btn-save")?.click();
+      }
     }
-  }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
+  // ---------- RENDER ----------
   return (
-    <div className="bg-gray-50 min-h-screen pb-24">
-      
-      {/* Top Bar */}
+    <div className="bg-gray-50 min-h-screen pb-32">
+      <style>{`
+        @keyframes wave { 0%,60%,100% { transform: translateY(0); opacity:.6 } 30% { transform: translateY(-4px); opacity:1 } }
+        @keyframes shimmer { 0% { transform: translateX(-100%) } 100% { transform: translateX(100%) } }
+        @keyframes rollbar { 0% { transform: translateX(-100%) } 100% { transform: translateX(300%) } }
+        @keyframes fadeIn { from { opacity:0 } to { opacity:1 } }
+      `}</style>
+
+      {/* Top bar */}
       <div className="bg-white border-b border-gray-200 sticky top-0 z-40 shadow-sm">
         <div className="max-w-4xl mx-auto px-4 h-16 flex items-center justify-between">
           <div className="flex items-center gap-4">
             <Link href="/seller/dashboard" className="p-2 bg-gray-50 rounded-full hover:bg-gray-100 transition">
               <ArrowLeft size={20} className="text-gray-700" />
             </Link>
-            <h1 className="font-bold text-lg text-gray-900 hidden sm:block">Edit Listing</h1>
+            <h1 className="font-bold text-lg text-gray-900">Edit Listing</h1>
           </div>
-          <button form="edit-form" type="submit" disabled={loading} className="bg-gray-900 text-white px-6 py-2 rounded-xl font-bold hover:bg-gray-800 transition flex items-center gap-2">
-            {loading ? <Loader2 className="animate-spin" size={18} /> : <><Save size={18} /> Save Changes</>}
-          </button>
+          <div className="flex items-center gap-3">
+            <span className="text-xs text-gray-500 hidden sm:block">
+              {(images.length || (currentImage ? 1 : 0))}/{MAX_IMAGES} photos
+            </span>
+            <button
+              type="button"
+              onClick={openPreview}
+              className="flex items-center gap-1.5 text-sm font-bold text-orange-600 hover:text-orange-700 px-3 py-2 rounded-lg hover:bg-orange-50 transition"
+            >
+              <Eye size={16} /> Preview
+            </button>
+          </div>
+        </div>
+        <div className="h-1 bg-gray-100">
+          <div
+            className="h-full bg-gradient-to-r from-orange-400 to-orange-600 transition-all duration-300"
+            style={{ width: `${progress}%` }}
+          />
         </div>
       </div>
 
-      <div className="max-w-4xl mx-auto px-4 mt-8">
-        <form id="edit-form" action={handleSubmit} className="space-y-6">
-          
-          <input type="hidden" name="current_image" value={product.image_url || ""} />
-          <input type="hidden" name="escrow_enabled" value={String(escrowEnabled)} />
+      <form
+        ref={formRef}
+        onSubmit={handleSubmit}
+        onInput={updateProgress}
+        onChange={updateProgress}
+        className="max-w-4xl mx-auto px-4 mt-8 space-y-6"
+      >
+        {/* 1 — PHOTOS */}
+        <section className="bg-white p-6 md:p-8 rounded-3xl border border-gray-200 shadow-sm">
+          <SectionHeader n={1} title="Product Photos" subtitle={`Up to ${MAX_IMAGES}. New uploads replace the current cover.`} />
 
-          {/* SECTION 1: PHOTOS */}
-          <div className="bg-white p-6 md:p-8 rounded-3xl border border-gray-200 shadow-sm">
-            <div className="flex items-center gap-4 mb-6">
-              <div className="w-10 h-10 bg-orange-100 text-orange-600 rounded-xl flex items-center justify-center font-bold text-lg shrink-0">1</div>
-              <div>
-                <h3 className="font-bold text-gray-900 text-lg">Product Photo</h3>
-                <p className="text-sm text-gray-500">Upload a new photo to replace the current one.</p>
-              </div>
-            </div>
-            
-            <div className="flex flex-col md:flex-row gap-6">
-              <div className="relative w-full md:w-1/2 aspect-video md:aspect-square bg-gray-100 rounded-2xl overflow-hidden border border-gray-200 group">
-                {imagePreview ? (
-                  <img src={imagePreview} alt="Preview" className="w-full h-full object-cover" />
-                ) : (
-                  <div className="w-full h-full flex flex-col items-center justify-center text-gray-400">
-                    <ImageIcon size={32} className="mb-2 opacity-50" />
-                    <span className="text-sm font-medium">No Image</span>
-                  </div>
-                )}
-                <label className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center cursor-pointer">
-                  <div className="bg-white text-gray-900 px-4 py-2 rounded-xl font-bold flex items-center gap-2">
-                    <UploadCloud size={18} /> Change Photo
-                  </div>
-                  <input type="file" name="image" accept="image/*" onChange={handleImageChange} className="hidden" />
-                </label>
-              </div>
-              <div className="flex-1 flex flex-col justify-center">
-                <h4 className="font-bold text-gray-900 mb-2">High-Quality Images Sell Faster</h4>
-                <p className="text-sm text-gray-500 mb-4">Click the image on the left to upload a new photo. JPG, PNG, or WEBP up to 5MB.</p>
-              </div>
-            </div>
+          <div
+            onDragOver={e => e.preventDefault()}
+            onDrop={onDrop}
+            onClick={() => fileInputRef.current?.click()}
+            className="border-2 border-dashed border-gray-300 rounded-2xl p-8 text-center hover:border-orange-500 hover:bg-orange-50/30 transition cursor-pointer"
+          >
+            <UploadCloud className="mx-auto text-orange-500 mb-3" size={40} />
+            <p className="font-bold text-gray-900">Click or drag images here</p>
+            <p className="text-sm text-gray-500 mt-1">JPG, PNG, WEBP · Max 5MB each · Up to {MAX_IMAGES}</p>
+            <input
+              ref={fileInputRef}
+              type="file"
+              name="images"
+              accept="image/jpeg,image/png,image/webp"
+              multiple
+              onChange={onFileChange}
+              className="sr-only"
+            />
           </div>
 
-          {/* SECTION 2: ITEM DETAILS */}
-          <div className="bg-white p-6 md:p-8 rounded-3xl border border-gray-200 shadow-sm">
-            <div className="flex items-center gap-4 mb-6">
-              <div className="w-10 h-10 bg-orange-100 text-orange-600 rounded-xl flex items-center justify-center font-bold text-lg shrink-0">2</div>
-              <div>
-                <h3 className="font-bold text-gray-900 text-lg">Item Details</h3>
-                <p className="text-sm text-gray-500">Update your listing title and condition.</p>
-              </div>
-            </div>
+          {(currentImage || previews.length > 0) && (
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-3 mt-4">
+              {/* Current existing image */}
+              {currentImage && (
+                <div className="relative aspect-square rounded-xl overflow-hidden border-2 border-blue-300 bg-gray-100">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={currentImage} alt="Current cover" className="w-full h-full object-cover" />
+                  <div className="absolute top-2 left-2 bg-blue-600 text-white text-[10px] font-bold px-2 py-0.5 rounded flex items-center gap-1">
+                    <Star size={10} fill="currentColor" /> CURRENT
+                  </div>
+                  {images.length > 0 && (
+                    <div className="absolute inset-0 bg-black/50 flex items-center justify-center">
+                      <span className="text-white text-[10px] font-bold text-center px-2">
+                        Will be replaced by new upload
+                      </span>
+                    </div>
+                  )}
+                  {images.length === 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setCurrentImage("")}
+                      title="Remove current image"
+                      className="absolute top-2 right-2 bg-red-600 text-white p-1.5 rounded-full hover:bg-red-700 transition"
+                    >
+                      <Trash2 size={12} />
+                    </button>
+                  )}
+                </div>
+              )}
 
-            <div className="space-y-6">
-              <div>
-                <label className="block text-sm font-bold text-gray-900 mb-2">Listing Title</label>
-                <input name="title" defaultValue={product.title} required className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3.5 outline-none focus:bg-white focus:border-orange-500 focus:ring-4 focus:ring-orange-500/10 transition text-lg font-bold" />
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <div>
-                  <label className="block text-sm font-bold text-gray-900 mb-2">Price (₦)</label>
-                  <div className="relative">
-                    <span className="absolute left-4 top-1/2 -translate-y-1/2 font-bold text-gray-900 text-lg">₦</span>
-                    <input name="price" type="number" defaultValue={product.price} required className="w-full bg-gray-50 border border-gray-200 rounded-xl pl-10 pr-4 py-3.5 text-lg font-bold outline-none focus:bg-white focus:border-orange-500 focus:ring-4 focus:ring-orange-500/10 transition" />
+              {/* New uploads */}
+              {previews.map((src, i) => (
+                <div key={i} className="relative aspect-square rounded-xl overflow-hidden border bg-gray-100 group">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={src} alt={`Preview ${i + 1}`} className="w-full h-full object-cover" />
+                  {i === 0 && (
+                    <div className="absolute top-2 left-2 bg-orange-600 text-white text-[10px] font-bold px-2 py-0.5 rounded flex items-center gap-1">
+                      <Star size={10} fill="currentColor" /> NEW COVER
+                    </div>
+                  )}
+                  <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition flex items-center justify-center gap-1.5">
+                    {i > 0 && (
+                      <button type="button" onClick={() => makeCover(i)} title="Make cover"
+                        className="bg-white text-orange-600 p-1.5 rounded-full hover:bg-orange-50">
+                        <Star size={12} />
+                      </button>
+                    )}
+                    {i > 0 && (
+                      <button type="button" onClick={() => moveImage(i, -1)} title="Move left"
+                        className="bg-white text-gray-700 p-1.5 rounded-full hover:bg-gray-50">
+                        <ChevronLeft size={12} />
+                      </button>
+                    )}
+                    {i < images.length - 1 && (
+                      <button type="button" onClick={() => moveImage(i, 1)} title="Move right"
+                        className="bg-white text-gray-700 p-1.5 rounded-full hover:bg-gray-50">
+                        <ChevronRight size={12} />
+                      </button>
+                    )}
+                    <button type="button" onClick={() => removeImage(i)} title="Remove"
+                      className="bg-red-600 text-white p-1.5 rounded-full hover:bg-red-700">
+                      <Trash2 size={12} />
+                    </button>
                   </div>
                 </div>
-                <div>
-                  <label className="block text-sm font-bold text-gray-900 mb-2">Condition</label>
-                  <select name="condition" defaultValue={product.condition} required className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3.5 outline-none focus:bg-white focus:border-orange-500 transition text-gray-700">
-                    <option value="Brand New">Brand New</option>
-                    <option value="Like New">Like New (Open Box)</option>
-                    <option value="Foreign Used">Foreign Used (Tokunbo)</option>
-                    <option value="Nigerian Used">Nigerian Used</option>
-                    <option value="Refurbished">Refurbished</option>
-                  </select>
-                </div>
-              </div>
+              ))}
             </div>
-          </div>
+          )}
+        </section>
 
-          {/* SECTION 3: LOCATION */}
-          <div className="bg-white p-6 md:p-8 rounded-3xl border border-gray-200 shadow-sm">
-            <div className="flex items-center gap-4 mb-6">
-              <div className="w-10 h-10 bg-orange-100 text-orange-600 rounded-xl flex items-center justify-center font-bold text-lg shrink-0">3</div>
-              <div>
-                <h3 className="font-bold text-gray-900 text-lg">Location</h3>
-                <p className="text-sm text-gray-500">Where can buyers find this item?</p>
-              </div>
+        {/* 2 — DETAILS (no category — update action doesn't change it) */}
+        <section className="bg-white p-6 md:p-8 rounded-3xl border border-gray-200 shadow-sm">
+          <SectionHeader n={2} title="Item Details" subtitle="Update your listing details." />
+          <div className="space-y-5">
+            <div>
+              <label className="flex items-center justify-between text-sm font-bold text-gray-900 mb-2">
+                <span>Listing Title *</span>
+                <span className={`text-xs font-normal ${titleLen < 5 ? "text-red-500" : "text-gray-400"}`}>{titleLen}/80</span>
+              </label>
+              <input
+                name="title"
+                required
+                minLength={5}
+                maxLength={80}
+                defaultValue={product.title}
+                className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3.5 outline-none focus:bg-white focus:border-orange-500 focus:ring-4 focus:ring-orange-500/10 transition"
+              />
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
               <div>
-                <label className="block text-sm font-bold text-gray-900 mb-2">State</label>
-                <select name="location_state" defaultValue={product.location_state} required className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3.5 outline-none focus:bg-white focus:border-orange-500 transition text-gray-700">
-                  <option value="">Select a State</option>
-                  {NIGERIAN_STATES.map(s => <option key={s} value={s}>{s}</option>)}
+                <label className="block text-sm font-bold text-gray-900 mb-2">Condition *</label>
+                <select
+                  name="condition"
+                  required
+                  defaultValue={product.condition}
+                  className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3.5 outline-none focus:bg-white focus:border-orange-500 transition"
+                >
+                  <option value="">Select condition</option>
+                  {CONDITIONS.map(c => <option key={c} value={c}>{c}</option>)}
                 </select>
               </div>
               <div>
-                <label className="block text-sm font-bold text-gray-900 mb-2">City / LGA / Area</label>
-                <input name="location_city" defaultValue={product.location_city} required className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3.5 outline-none focus:bg-white focus:border-orange-500 transition" />
+                <label className="block text-sm font-bold text-gray-900 mb-2">Price (₦) *</label>
+                <div className="relative">
+                  <span className="absolute left-4 top-1/2 -translate-y-1/2 font-bold text-gray-900 text-lg">₦</span>
+                  <input
+                    name="price"
+                    type="number"
+                    min={100}
+                    required
+                    defaultValue={product.price}
+                    className="w-full bg-gray-50 border border-gray-200 rounded-xl pl-10 pr-4 py-3.5 text-lg font-bold outline-none focus:bg-white focus:border-orange-500 transition"
+                  />
+                </div>
               </div>
             </div>
-          </div>
 
-          {/* SECTION 4: DESCRIPTION & ESCROW */}
-          <div className="bg-white p-6 md:p-8 rounded-3xl border border-gray-200 shadow-sm space-y-6">
-            <div className="flex items-center gap-4 mb-2">
-              <div className="w-10 h-10 bg-orange-100 text-orange-600 rounded-xl flex items-center justify-center font-bold text-lg shrink-0">4</div>
-              <div>
-                <h3 className="font-bold text-gray-900 text-lg">Description & Settings</h3>
-              </div>
-            </div>
+            <button
+              type="button"
+              onClick={() => setNegotiable(v => !v)}
+              className={`w-full flex items-center justify-between px-4 py-3.5 rounded-xl border font-bold text-sm transition ${negotiable ? "bg-green-50 border-green-300 text-green-700" : "bg-gray-50 border-gray-200 text-gray-600"}`}
+            >
+              <span className="flex items-center gap-2"><Tag size={16} /> Price negotiable</span>
+              <span className={`w-10 h-5 rounded-full relative ${negotiable ? "bg-green-600" : "bg-gray-300"}`}>
+                <span className={`absolute top-0.5 w-4 h-4 bg-white rounded-full transition-all ${negotiable ? "left-[22px]" : "left-0.5"}`} />
+              </span>
+            </button>
 
+            {/* Tags */}
             <div>
-              <label className="block text-sm font-bold text-gray-900 mb-2">Full Description</label>
-              <textarea name="description" defaultValue={product.description} required rows={6} className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3.5 outline-none focus:bg-white focus:border-orange-500 focus:ring-4 focus:ring-orange-500/10 transition"></textarea>
-            </div>
-
-            <div className="bg-orange-50 border border-orange-100 rounded-2xl p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-              <div className="flex items-center gap-4">
-                <div className="bg-white p-2.5 rounded-xl text-orange-600 shadow-sm shrink-0">
-                  <ShieldCheck size={24} />
-                </div>
-                <div>
-                  <h4 className="font-bold text-gray-900 text-base">Enable OjaLoop Escrow</h4>
-                  <p className="text-sm text-gray-600 mt-0.5">Buyers can pay safely through Escrow protection.</p>
-                </div>
+              <label className="block text-sm font-bold text-gray-900 mb-2">Tags (optional · max {MAX_TAGS})</label>
+              <div className="flex flex-wrap gap-2 mb-2">
+                {tags.map(t => (
+                  <span key={t} className="inline-flex items-center gap-1 bg-gray-100 text-gray-700 text-xs font-medium px-2.5 py-1 rounded-full">
+                    #{t}
+                    <button type="button" onClick={() => removeTag(t)} className="hover:text-red-600"><X size={12} /></button>
+                  </span>
+                ))}
               </div>
-              <button
-                type="button"
-                onClick={() => setEscrowEnabled(!escrowEnabled)}
-                className={`w-14 h-8 rounded-full relative cursor-pointer shadow-inner shrink-0 self-end sm:self-auto transition-colors duration-300 ${escrowEnabled ? 'bg-orange-600' : 'bg-gray-300'}`}
-              >
-                <div className={`w-6 h-6 bg-white rounded-full absolute top-1 shadow-sm transition-transform duration-300 ${escrowEnabled ? 'right-1' : 'left-1'}`}></div>
-              </button>
+              <div className="flex gap-2">
+                <input
+                  value={tagInput}
+                  onChange={e => setTagInput(e.target.value)}
+                  onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); addTag(); } }}
+                  placeholder="e.g. iphone, apple, 256gb"
+                  className="flex-1 bg-gray-50 border border-gray-200 rounded-xl px-4 py-2.5 outline-none focus:bg-white focus:border-orange-500 transition text-sm"
+                />
+                <button type="button" onClick={addTag} className="px-4 py-2.5 bg-gray-900 text-white rounded-xl font-bold text-sm hover:bg-gray-800 transition">
+                  Add
+                </button>
+              </div>
             </div>
+          </div>
+        </section>
 
-            <div className="bg-[#FFF9E6] border border-yellow-200 rounded-2xl p-4 flex gap-3">
-              <ShieldAlert size={20} className="text-yellow-600 shrink-0 mt-0.5" />
-              <p className="text-xs text-yellow-800 leading-relaxed">
-                <strong>Safety Warning:</strong> Never share your bank PIN, OTP, or card details with a buyer.
-              </p>
+        {/* 3 — LOCATION & DELIVERY */}
+        <section className="bg-white p-6 md:p-8 rounded-3xl border border-gray-200 shadow-sm">
+          <SectionHeader n={3} title="Location & Delivery" subtitle="Where can buyers find this item?" />
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-5 mb-5">
+            <div>
+              <label className="block text-sm font-bold text-gray-900 mb-2">State *</label>
+              <select
+                name="location_state"
+                required
+                defaultValue={product.location_state}
+                className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3.5 outline-none focus:bg-white focus:border-orange-500 transition"
+              >
+                <option value="">Select a state</option>
+                {NIGERIAN_STATES.map(s => <option key={s} value={s}>{s}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-bold text-gray-900 mb-2">City / LGA / Area *</label>
+              <input
+                name="location_city"
+                required
+                minLength={2}
+                defaultValue={product.location_city}
+                className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3.5 outline-none focus:bg-white focus:border-orange-500 transition"
+              />
             </div>
           </div>
 
-          {/* MOBILE STICKY SAVE BUTTON */}
-          <div className="fixed bottom-16 left-0 right-0 p-4 bg-white border-t md:hidden z-40">
-             <button type="submit" disabled={loading} className="w-full bg-orange-600 text-white py-4 rounded-xl font-bold text-lg hover:bg-orange-700 transition flex justify-center items-center gap-2">
-              {loading ? <Loader2 className="animate-spin" size={24} /> : <><CheckCircle2 size={20} /> Save Changes</>}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <button type="button" onClick={() => setDeliveryPickup(v => !v)}
+              className={`flex items-center gap-3 px-4 py-3 rounded-xl border font-bold text-sm transition ${deliveryPickup ? "bg-orange-50 border-orange-300 text-orange-700" : "bg-gray-50 border-gray-200 text-gray-600"}`}>
+              <Store size={18} /> <span className="flex-1 text-left">Buyer pickup</span>
+              {deliveryPickup && <CheckCircle2 size={18} />}
+            </button>
+            <button type="button" onClick={() => setDeliveryShipping(v => !v)}
+              className={`flex items-center gap-3 px-4 py-3 rounded-xl border font-bold text-sm transition ${deliveryShipping ? "bg-orange-50 border-orange-300 text-orange-700" : "bg-gray-50 border-gray-200 text-gray-600"}`}>
+              <Truck size={18} /> <span className="flex-1 text-left">Nationwide shipping</span>
+              {deliveryShipping && <CheckCircle2 size={18} />}
+            </button>
+          </div>
+        </section>
+
+        {/* 4 — DESCRIPTION & OPTIONS */}
+        <section className="bg-white p-6 md:p-8 rounded-3xl border border-gray-200 shadow-sm space-y-5">
+          <SectionHeader n={4} title="Description & Settings" subtitle="Update the details and payment options." />
+
+          <div>
+            <label className="flex items-center justify-between text-sm font-bold text-gray-900 mb-2">
+              <span>Full Description *</span>
+              <span className={`text-xs font-normal ${descLen < 20 ? "text-red-500" : "text-gray-400"}`}>{descLen}/1000</span>
+            </label>
+            <textarea
+              name="description"
+              required
+              minLength={20}
+              maxLength={1000}
+              rows={6}
+              defaultValue={product.description}
+              className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3.5 outline-none focus:bg-white focus:border-orange-500 transition"
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-bold text-gray-900 mb-2 flex items-center gap-2"><Video size={16} /> Video URL (optional)</label>
+            <input
+              type="url"
+              value={videoUrl}
+              onChange={e => setVideoUrl(e.target.value)}
+              placeholder="YouTube or TikTok link showing the item in action"
+              className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 outline-none focus:bg-white focus:border-orange-500 transition text-sm"
+            />
+          </div>
+
+          <div className="bg-orange-50 border border-orange-100 rounded-2xl p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div className="flex items-center gap-4">
+              <div className="bg-white p-2.5 rounded-xl text-orange-600 shadow-sm"><ShieldCheck size={24} /></div>
+              <div>
+                <h4 className="font-bold text-gray-900">Enable OjaLoop Escrow</h4>
+                <p className="text-sm text-gray-600 mt-0.5">Buyers can pay safely through Escrow protection.</p>
+              </div>
+            </div>
+            <button type="button" onClick={() => setEscrowEnabled(v => !v)}
+              className={`w-14 h-8 rounded-full relative cursor-pointer shadow-inner transition-colors ${escrowEnabled ? "bg-orange-600" : "bg-gray-300"}`}>
+              <div className={`w-6 h-6 bg-white rounded-full absolute top-1 transition-transform ${escrowEnabled ? "right-1" : "left-1"}`} />
             </button>
           </div>
 
-        </form>
+          <div className="bg-yellow-50 border border-yellow-200 rounded-2xl p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div className="flex items-center gap-4">
+              <div className="bg-white p-2.5 rounded-xl text-yellow-600 shadow-sm"><Zap size={24} /></div>
+              <div>
+                <h4 className="font-bold text-gray-900">Boost listing</h4>
+                <p className="text-sm text-gray-600 mt-0.5">Feature at top of category for more views.</p>
+              </div>
+            </div>
+            <button type="button" onClick={() => setBoost(v => !v)}
+              className={`w-14 h-8 rounded-full relative cursor-pointer shadow-inner transition-colors ${boost ? "bg-yellow-500" : "bg-gray-300"}`}>
+              <div className={`w-6 h-6 bg-white rounded-full absolute top-1 transition-transform ${boost ? "right-1" : "left-1"}`} />
+            </button>
+          </div>
+
+          <div className="bg-[#FFF9E6] border border-yellow-200 rounded-2xl p-4 flex gap-3">
+            <ShieldAlert size={20} className="text-yellow-600 shrink-0 mt-0.5" />
+            <p className="text-xs text-yellow-800 leading-relaxed">
+              <strong>Safety Tip:</strong> Never share your bank PIN, OTP, or card details. Only communicate through OjaLoop.
+            </p>
+          </div>
+        </section>
+
+        {/* Sticky action bar */}
+        <div className="fixed bottom-0 left-0 right-0 bg-white border-t shadow-lg z-40">
+          <div className="max-w-4xl mx-auto px-4 py-3 flex gap-3 flex-row-reverse">
+            <button
+              id="btn-save"
+              type="submit"
+              disabled={loading}
+              className="relative overflow-hidden flex-1 sm:flex-none sm:px-8 py-3.5 rounded-xl font-bold bg-orange-600 text-white hover:bg-orange-700 transition flex items-center justify-center gap-2 disabled:opacity-80 disabled:cursor-wait"
+            >
+              {loading && (
+                <span className="absolute inset-0 pointer-events-none">
+                  <span className="absolute inset-0 bg-gradient-to-r from-transparent via-white/30 to-transparent"
+                    style={{ animation: "shimmer 1.5s linear infinite" }} />
+                </span>
+              )}
+              <span className="relative flex items-center justify-center gap-2">
+                {loading ? (
+                  <>
+                    <RollingDots />
+                    <span>Saving</span>
+                  </>
+                ) : (
+                  <>
+                    <Save size={18} />
+                    <span>Save Changes</span>
+                  </>
+                )}
+              </span>
+              {loading && (
+                <span className="absolute bottom-0 left-0 right-0 h-0.5 overflow-hidden bg-white/20">
+                  <span className="block h-full w-1/3 bg-white"
+                    style={{ animation: "rollbar 1.4s linear infinite" }} />
+                </span>
+              )}
+            </button>
+
+            <Link
+              href="/seller/dashboard"
+              className="flex-1 sm:flex-none sm:px-6 py-3.5 rounded-xl font-bold border-2 border-gray-300 text-gray-700 hover:bg-gray-50 transition flex items-center justify-center gap-2"
+            >
+              <X size={18} /> Cancel
+            </Link>
+          </div>
+          <div className="max-w-4xl mx-auto px-4 pb-2">
+            <p className="text-[10px] text-gray-400 text-center">
+              Shortcut: <kbd className="px-1 bg-gray-100 rounded">Ctrl+S</kbd> save · Completion: {progress}%
+            </p>
+          </div>
+        </div>
+      </form>
+
+      {showPreview && (
+        <PreviewModal
+          data={previewData}
+          previewSrc={previews[0] ?? currentImage}
+          condition={previewData.condition}
+          tags={tags}
+          escrow={escrowEnabled}
+          negotiable={negotiable}
+          onClose={() => setShowPreview(false)}
+        />
+      )}
+    </div>
+  );
+}
+
+// ============================================================
+// HELPERS
+// ============================================================
+function RollingDots() {
+  return (
+    <span className="inline-flex items-center gap-0.5">
+      {[0, 1, 2].map(i => (
+        <span
+          key={i}
+          className="inline-block w-1.5 h-1.5 rounded-full bg-current"
+          style={{ animation: "wave 1.2s ease-in-out infinite", animationDelay: `${i * 0.12}s` }}
+        />
+      ))}
+    </span>
+  );
+}
+
+function SectionHeader({ n, title, subtitle }: { n: number; title: string; subtitle: string }) {
+  return (
+    <div className="flex items-center gap-4 mb-6">
+      <div className="w-10 h-10 bg-orange-100 text-orange-600 rounded-xl flex items-center justify-center font-bold text-lg shrink-0">{n}</div>
+      <div>
+        <h3 className="font-bold text-gray-900 text-lg">{title}</h3>
+        <p className="text-sm text-gray-500">{subtitle}</p>
+      </div>
+    </div>
+  );
+}
+
+function PreviewModal({
+  data, previewSrc, condition, tags, escrow, negotiable, onClose,
+}: {
+  data: Record<string, string>;
+  previewSrc?: string;
+  condition: string;
+  tags: string[];
+  escrow: boolean;
+  negotiable: boolean;
+  onClose: () => void;
+}) {
+  return (
+    <div
+      className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4"
+      style={{ animation: "fadeIn 0.2s ease-out" }}
+      onClick={onClose}
+    >
+      <div
+        className="bg-white rounded-3xl max-w-md w-full max-h-[90vh] overflow-y-auto shadow-2xl"
+        onClick={e => e.stopPropagation()}
+      >
+        <div className="relative aspect-square bg-gray-100">
+          {previewSrc ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={previewSrc} alt="Preview" className="w-full h-full object-cover" />
+          ) : (
+            <div className="w-full h-full flex items-center justify-center text-gray-400">
+              <ImageIcon size={40} />
+            </div>
+          )}
+          <button
+            onClick={onClose}
+            className="absolute top-3 right-3 bg-black/50 text-white p-2 rounded-full hover:bg-black/70 transition"
+          >
+            <X size={18} />
+          </button>
+          {escrow && (
+            <div className="absolute bottom-3 left-3 bg-green-600 text-white text-xs font-bold px-3 py-1.5 rounded-full flex items-center gap-1">
+              <ShieldCheck size={14} /> Escrow protected
+            </div>
+          )}
+        </div>
+        <div className="p-5 space-y-3">
+          <h2 className="text-lg font-bold text-gray-900">{data.title || "Untitled listing"}</h2>
+          <div className="flex items-baseline gap-2">
+            <span className="text-2xl font-bold text-orange-600">
+              ₦{Number(data.price || 0).toLocaleString()}
+            </span>
+            {negotiable && <span className="text-xs font-bold text-green-600 bg-green-50 px-2 py-0.5 rounded">Negotiable</span>}
+          </div>
+          <div className="flex flex-wrap gap-2 text-xs">
+            {condition && <span className="bg-gray-100 text-gray-700 px-2 py-1 rounded-full font-medium">{condition}</span>}
+            {(data.state || data.city) && (
+              <span className="bg-gray-100 text-gray-700 px-2 py-1 rounded-full font-medium">
+                📍 {[data.city, data.state].filter(Boolean).join(", ")}
+              </span>
+            )}
+          </div>
+          {tags.length > 0 && (
+            <div className="flex flex-wrap gap-1.5">
+              {tags.map(t => (
+                <span key={t} className="text-xs text-orange-600 bg-orange-50 px-2 py-0.5 rounded-full">#{t}</span>
+              ))}
+            </div>
+          )}
+          <p className="text-sm text-gray-600 whitespace-pre-wrap leading-relaxed">
+            {data.description || "No description yet."}
+          </p>
+        </div>
       </div>
     </div>
   );

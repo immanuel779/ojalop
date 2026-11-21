@@ -1,11 +1,10 @@
 import type { NextConfig } from "next";
 
-const nextConfig: NextConfig = {
+const nextConfig = {
   experimental: {
     serverActions: {
-      bodySizeLimit: '5mb', // Allows uploading images up to 5MB
+      bodySizeLimit: "6mb",   // default is 1mb — phone photos exceed it
     },
   },
 };
-
 export default nextConfig;
