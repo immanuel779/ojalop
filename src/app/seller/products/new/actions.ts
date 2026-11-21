@@ -234,7 +234,6 @@ async function verifyProductOwnership(
 
   if (error || !product) return { error: "Product not found." };
 
-  // Supabase returns untyped data without a generated schema — narrow once.
   const row = product as unknown as ProductOwnershipRow;
 
   const store = Array.isArray(row.stores) ? row.stores[0] : row.stores;
@@ -299,6 +298,10 @@ async function generateUniqueSlug(supabase: SupabaseClient, title: string): Prom
   return `${base}-${crypto.randomUUID().slice(0, 8)}`;
 }
 
+/**
+ * Insert with graceful fallback for missing optional columns.
+ * Catches both standard Postgres errors AND Supabase schema cache errors (PGRST204).
+ */
 async function insertProductSafe(
   supabase: SupabaseClient,
   payload: Record<string, unknown>
@@ -311,7 +314,10 @@ async function insertProductSafe(
 
   if (
     error &&
-    (error.code === "42703" || /column .* does not exist/i.test(error.message))
+    (error.code === "42703" ||
+     error.code === "PGRST204" ||
+     /column .* does not exist/i.test(error.message) ||
+     /Could not find the '.*' column/i.test(error.message))
   ) {
     const retry = await supabase
       .from("products")
@@ -326,6 +332,10 @@ async function insertProductSafe(
   return { data };
 }
 
+/**
+ * Update with graceful fallback for missing optional columns.
+ * Catches both standard Postgres errors AND Supabase schema cache errors (PGRST204).
+ */
 async function updateProductSafe(
   supabase: SupabaseClient,
   id: string,
@@ -338,7 +348,10 @@ async function updateProductSafe(
 
   if (
     error &&
-    (error.code === "42703" || /column .* does not exist/i.test(error.message))
+    (error.code === "42703" ||
+     error.code === "PGRST204" ||
+     /column .* does not exist/i.test(error.message) ||
+     /Could not find the '.*' column/i.test(error.message))
   ) {
     const retry = await supabase
       .from("products")
